@@ -1,11 +1,8 @@
+// 방향키만 카메라에 쓴다. 글자 키는 명령 단축키(Q W E R, A S D, Z X ...)로 쓴다.
 const PAN_KEYS = {
-  KeyW: [0, -1],
   ArrowUp: [0, -1],
-  KeyS: [0, 1],
   ArrowDown: [0, 1],
-  KeyA: [-1, 0],
   ArrowLeft: [-1, 0],
-  KeyD: [1, 0],
   ArrowRight: [1, 0],
 };
 
@@ -15,57 +12,75 @@ const isTyping = (event) => {
 };
 
 /**
- * 카메라 조작용 입력 상태. 3-1에서는 이동·확대만 다룬다.
- * (선택과 우클릭 명령은 3-3에서 추가)
+ * 게임 화면의 입력.
+ * - 카메라: 방향키, 화면 가장자리, 가운데 버튼 드래그, 휠
+ * - 왼쪽·오른쪽 버튼과 키 입력은 handlers로 GameView에 넘긴다
  */
 export class Input {
   constructor(canvas) {
     this.canvas = canvas;
     this.keys = new Set();
     this.mouse = { x: 0, y: 0, inside: false };
-    this.dragging = false;
-    this.dragDelta = { x: 0, y: 0 };
+    this.panning = false;
+    this.panDelta = { x: 0, y: 0 };
     this.wheelAccum = 0;
     this.wheelSteps = 0;
+    /** @type {{ down?: Function, move?: Function, up?: Function, key?: Function }} */
+    this.handlers = {};
     this.cleanups = [];
 
     this.listen(window, 'keydown', (e) => {
-      if (isTyping(e) || !PAN_KEYS[e.code]) return;
-      this.keys.add(e.code);
-      e.preventDefault();
+      if (isTyping(e)) return;
+      if (PAN_KEYS[e.code]) {
+        this.keys.add(e.code);
+        e.preventDefault();
+        return;
+      }
+      this.handlers.key?.(e);
     });
     this.listen(window, 'keyup', (e) => this.keys.delete(e.code));
     this.listen(window, 'blur', () => {
       this.keys.clear();
       this.mouse.inside = false;
-      this.dragging = false;
+      this.panning = false;
     });
 
     this.listen(window, 'pointermove', (e) => {
-      if (e.pointerType !== 'mouse') return;
-      if (this.dragging) {
-        this.dragDelta.x += e.clientX - this.mouse.x;
-        this.dragDelta.y += e.clientY - this.mouse.y;
+      if (e.pointerType === 'mouse') {
+        if (this.panning) {
+          this.panDelta.x += e.clientX - this.mouse.x;
+          this.panDelta.y += e.clientY - this.mouse.y;
+        }
+        this.mouse.inside = true;
       }
       this.mouse.x = e.clientX;
       this.mouse.y = e.clientY;
-      this.mouse.inside = true;
+      this.handlers.move?.(e.clientX, e.clientY, e);
     });
     this.listen(document.documentElement, 'mouseleave', () => {
       this.mouse.inside = false;
     });
 
-    // 가운데 버튼 드래그로 화면 이동
     this.listen(canvas, 'pointerdown', (e) => {
-      if (e.button !== 1) return;
-      e.preventDefault();
-      this.dragging = true;
       this.mouse.x = e.clientX;
       this.mouse.y = e.clientY;
-      canvas.setPointerCapture(e.pointerId);
+      if (e.button === 1) {
+        e.preventDefault();
+        this.panning = true;
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (e.button === 0 || e.button === 2) {
+        canvas.setPointerCapture(e.pointerId);
+        this.handlers.down?.(e.button, e.clientX, e.clientY, e);
+      }
     });
     this.listen(canvas, 'pointerup', (e) => {
-      if (e.button === 1) this.dragging = false;
+      if (e.button === 1) {
+        this.panning = false;
+        return;
+      }
+      if (e.button === 0 || e.button === 2) this.handlers.up?.(e.button, e.clientX, e.clientY, e);
     });
     this.listen(canvas, 'mousedown', (e) => {
       if (e.button === 1) e.preventDefault(); // 윈도우 자동 스크롤 막기
@@ -97,7 +112,7 @@ export class Input {
     this.cleanups.push(() => target.removeEventListener(type, handler, options));
   }
 
-  /** 방향키·WASD 입력 (-1, 0, 1) */
+  /** 방향키 입력 (-1, 0, 1) */
   keyAxis() {
     let x = 0;
     let y = 0;
@@ -110,15 +125,15 @@ export class Input {
 
   /** 마우스가 창 가장자리에 닿았을 때의 방향 (-1, 0, 1) */
   edgeAxis(width, height, margin = 8) {
-    if (!this.mouse.inside || this.dragging) return [0, 0];
+    if (!this.mouse.inside || this.panning) return [0, 0];
     const { x, y } = this.mouse;
     return [x <= margin ? -1 : x >= width - margin ? 1 : 0, y <= margin ? -1 : y >= height - margin ? 1 : 0];
   }
 
-  consumeDrag() {
-    const delta = { ...this.dragDelta };
-    this.dragDelta.x = 0;
-    this.dragDelta.y = 0;
+  consumePan() {
+    const delta = { ...this.panDelta };
+    this.panDelta.x = 0;
+    this.panDelta.y = 0;
     return delta;
   }
 
@@ -132,5 +147,6 @@ export class Input {
     this.cleanups.forEach((cleanup) => cleanup());
     this.cleanups = [];
     this.keys.clear();
+    this.handlers = {};
   }
 }

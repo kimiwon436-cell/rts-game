@@ -16,8 +16,10 @@ const SHORE = '#5a8fb4';
  * 매 프레임에는 화면에 보이는 청크만 복사한다.
  */
 export class TerrainCache {
-  constructor(map) {
+  /** tiles: 경기 중에 바뀌는 지형 배열 (나무가 베이면 풀밭이 된다) */
+  constructor(map, tiles = map.tiles) {
     this.map = map;
+    this.tiles = tiles;
     this.chunks = new Map();
     this.chunksX = Math.ceil(map.width / CHUNK_TILES);
     this.chunksY = Math.ceil(map.height / CHUNK_TILES);
@@ -45,6 +47,11 @@ export class TerrainCache {
     return canvas;
   }
 
+  /** 칸이 바뀌었을 때 그 칸이 든 청크를 다음 프레임에 다시 그리게 한다 */
+  invalidateTile(tx, ty) {
+    this.chunks.delete(Math.floor(ty / CHUNK_TILES) * this.chunksX + Math.floor(tx / CHUNK_TILES));
+  }
+
   renderChunk(cx, cy) {
     const canvas = document.createElement('canvas');
     canvas.width = CHUNK_PX;
@@ -67,7 +74,7 @@ export class TerrainCache {
 
   terrainAt(tx, ty) {
     if (tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height) return -1;
-    return this.map.tiles[ty * this.map.width + tx];
+    return this.tiles[ty * this.map.width + tx];
   }
 
   drawGround(ctx, tx, ty, px, py) {

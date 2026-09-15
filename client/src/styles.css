@@ -240,3 +240,73 @@ button, input { font: inherit; color: inherit; }
   to { opacity: 1; transform: none; }
 }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+/* ---------- 자원 막대 ---------- */
+.resources { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 16px; min-width: 0; }
+.res { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.res-label { font-size: 12px; font-weight: 600; }
+.res-gold .res-label { color: var(--gold); }
+.res-wood .res-label { color: #c69157; }
+.res-mana .res-label { color: #8fb6ff; }
+.res-pop .res-label { color: var(--text-soft); }
+.res-val { font-family: var(--f-mono); color: var(--text); font-variant-numeric: tabular-nums; }
+.res-val.is-full { color: #f08a80; }
+.res-age { font-size: 12.5px; color: var(--text-soft); white-space: nowrap; }
+@media (max-width: 980px) { .hud-top .versus { display: none; } }
+
+/* ---------- 명령 카드 ---------- */
+.hud .command-card { pointer-events: auto; }
+.command-card {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: 210px auto;
+  gap: 14px;
+  padding: 10px 12px;
+  background: rgba(14, 16, 22, 0.94);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+}
+.cc-info { display: grid; align-content: start; gap: 5px; min-width: 0; }
+.cc-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cc-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--f-display); font-size: 16px; font-weight: 700; }
+.cc-sub, .cc-text, .cc-hint { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-soft); }
+.cc-text:empty { display: none; }
+.cc-hint { color: var(--text-faint); }
+.meter { position: relative; height: 14px; overflow: hidden; background: #0b0d12; border: 1px solid var(--line); border-radius: 2px; }
+.meter-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: #3f8a58; }
+.meter-fill.is-progress { background: #a27a28; }
+.meter-text { position: relative; display: block; font-family: var(--f-mono); font-size: 10.5px; line-height: 12px; text-align: center; color: #f2eee4; }
+.cc-grid { display: grid; grid-template-columns: repeat(4, 66px); grid-auto-rows: 58px; gap: 6px; align-content: start; }
+.cc-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 4px 5px;
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+.cc-btn:hover:not(:disabled) { border-color: var(--gold); background: #242a36; }
+.cc-btn:disabled { opacity: 0.45; cursor: default; }
+.cc-key { position: absolute; top: 2px; right: 5px; font-family: var(--f-mono); font-size: 10px; color: var(--gold); }
+.cc-label { font-size: 11.5px; font-weight: 600; line-height: 1.2; word-break: keep-all; }
+.cc-cost, .cc-note { font-size: 10px; line-height: 1.2; white-space: nowrap; color: var(--text-soft); }
+.cc-cost { display: flex; gap: 5px; font-family: var(--f-mono); }
+.c-gold { color: var(--gold); }
+.c-wood { color: #c69157; }
+.c-mana { color: #8fb6ff; }
+.cc-btn.is-short .cc-cost span { color: #f08a80; }
+@media (max-width: 1180px) { .hud-info { display: none; } }
+@media (max-width: 860px) {
+  .command-card { left: 222px; right: 12px; transform: none; grid-template-columns: minmax(0, 1fr); }
+  .cc-grid { grid-template-columns: repeat(auto-fill, 66px); }
+}

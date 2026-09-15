@@ -8,13 +8,18 @@ const TERRAIN_COLORS = {
   [TERRAIN.ROCK]: '#6c6f73',
   [TERRAIN.TREE]: '#2a4f27',
 };
+const BASE_REFRESH_MS = 1000;
 
 const hexToRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 
-/** 맵 전체를 1타일 = 1픽셀로 그려 두고 카메라 영역을 겹쳐 보여준다. 클릭·드래그로 화면을 옮긴다. */
+/**
+ * 지형은 1타일 = 1픽셀로 그려 두고(나무가 베이면 1초에 한 번까지 다시 그린다),
+ * 금광·건물·유닛·카메라 영역은 매 프레임 겹쳐 그린다. 클릭·드래그로 화면을 옮긴다.
+ */
 export class Minimap {
-  constructor(map, camera, cssSize = 192) {
-    this.map = map;
+  constructor(world, camera, cssSize = 192) {
+    this.world = world;
+    this.map = world.map;
     this.camera = camera;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas = document.createElement('canvas');
@@ -23,13 +28,18 @@ export class Minimap {
     this.canvas.setAttribute('role', 'img');
     this.canvas.setAttribute('aria-label', '미니맵. 클릭하거나 드래그하면 그 위치로 화면을 옮깁니다.');
     this.ctx = this.canvas.getContext('2d');
-    this.base = this.renderBase();
+    this.palette = Object.fromEntries(Object.entries(TERRAIN_COLORS).map(([k, hex]) => [k, hexToRgb(hex)]));
+    this.base = document.createElement('canvas');
+    this.base.width = this.map.width;
+    this.base.height = this.map.height;
+    this.baseDirty = true;
+    this.lastBaseRender = -Infinity;
 
     let dragging = false;
     const moveCamera = (event) => {
       const r = this.canvas.getBoundingClientRect();
-      const tx = ((event.clientX - r.left) / r.width) * map.width;
-      const ty = ((event.clientY - r.top) / r.height) * map.height;
+      const tx = ((event.clientX - r.left) / r.width) * this.map.width;
+      const ty = ((event.clientY - r.top) / r.height) * this.map.height;
       camera.centerOn(tx * TILE_SIZE, ty * TILE_SIZE);
     };
     this.canvas.addEventListener('pointerdown', (event) => {
@@ -44,46 +54,61 @@ export class Minimap {
     this.canvas.addEventListener('pointerup', () => {
       dragging = false;
     });
+    this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+  }
+
+  /** 지형이 바뀌었다 (나무가 베였다) */
+  markTerrainDirty() {
+    this.baseDirty = true;
   }
 
   renderBase() {
-    const { width, height, tiles } = this.map;
-    const base = document.createElement('canvas');
-    base.width = width;
-    base.height = height;
-    const ctx = base.getContext('2d');
-
+    const { width, height } = this.map;
+    const tiles = this.world.tiles;
+    const ctx = this.base.getContext('2d');
     const image = ctx.createImageData(width, height);
-    const palette = Object.fromEntries(Object.entries(TERRAIN_COLORS).map(([k, hex]) => [k, hexToRgb(hex)]));
     for (let i = 0; i < tiles.length; i++) {
-      const [r, g, b] = palette[tiles[i]];
+      const [r, g, b] = this.palette[tiles[i]];
       image.data[i * 4] = r;
       image.data[i * 4 + 1] = g;
       image.data[i * 4 + 2] = b;
       image.data[i * 4 + 3] = 255;
     }
     ctx.putImageData(image, 0, 0);
-
-    ctx.fillStyle = '#e2b53e';
-    for (const m of this.map.goldMines) ctx.fillRect(m.x, m.y, m.w, m.h);
     ctx.fillStyle = '#9cc0ff';
     for (const w of this.map.wells) ctx.fillRect(w.x, w.y, w.w, w.h);
-    for (const { slot, keep } of this.map.starts) {
-      ctx.fillStyle = PLAYER_COLORS[slot];
-      ctx.fillRect(keep.x - 1, keep.y - 1, keep.w + 2, keep.h + 2);
-    }
-    return base;
   }
 
-  draw() {
-    const { ctx, canvas, camera, map } = this;
+  draw(timeMs) {
+    if (this.baseDirty && timeMs - this.lastBaseRender >= BASE_REFRESH_MS) {
+      this.renderBase();
+      this.baseDirty = false;
+      this.lastBaseRender = timeMs;
+    }
+
+    const { ctx, canvas, camera, map, world } = this;
+    const k = canvas.width / map.width; // 타일 하나의 픽셀 수
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.base, 0, 0, canvas.width, canvas.height);
 
-    const k = canvas.width / (map.width * TILE_SIZE);
+    ctx.fillStyle = '#e2b53e';
+    for (const m of map.goldMines) {
+      if (world.mineAmounts.has(m.id)) ctx.fillRect(m.x * k, m.y * k, m.w * k, m.h * k);
+    }
+    for (const b of world.buildings.values()) {
+      ctx.fillStyle = PLAYER_COLORS[b.owner];
+      ctx.fillRect(b.x * k, b.y * k, b.size * k, b.size * k);
+    }
+    const dot = Math.max(2, k * 0.9);
+    for (const u of world.units.values()) {
+      ctx.fillStyle = PLAYER_COLORS[u.owner];
+      ctx.fillRect(u.drawX * k - dot / 2, u.drawY * k - dot / 2, dot, dot);
+    }
+
     const view = camera.visibleRect();
+    const px = k / TILE_SIZE;
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = Math.max(1, canvas.width / 192);
-    ctx.strokeRect(view.x * k, view.y * k, view.w * k, view.h * k);
+    ctx.strokeRect(view.x * px, view.y * px, view.w * px, view.h * px);
   }
 }

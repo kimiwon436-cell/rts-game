@@ -29,5 +29,11 @@ export function createGameServer({ authMode, clientOrigins, countdownSec }) {
     lobby.attach(socket);
   });
 
-  return { httpServer, io, lobby };
+  const close = () =>
+    new Promise((resolve) => {
+      lobby.dispose();
+      io.close(() => resolve());
+    });
+
+  return { httpServer, io, lobby, close };
 }

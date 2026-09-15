@@ -1,15 +1,13 @@
 import { PLAYER_COLORS, TILE_SIZE } from '@rune/shared/constants.js';
+import { BUILDINGS } from '@rune/shared/data/buildings.js';
+import { UNITS } from '@rune/shared/data/units.js';
 import { TerrainCache } from './terrain.js';
+import { drawBuilding, drawGoldMine, drawHealthBar, drawLabel, drawSelectionRing, drawUnit } from './entities.js';
 
 const S = TILE_SIZE;
 const TAU = Math.PI * 2;
-const GOLD_NUGGETS = [
-  [-14, -6, 5],
-  [4, -11, 4],
-  [14, 5, 5],
-  [-3, 8, 4],
-  [-19, 9, 3],
-];
+const MARKER_MS = 550;
+const MARKER_COLORS = { move: '120, 230, 140', work: '226, 181, 62', place: '226, 181, 62' };
 
 const intersects = (rect, x, y, w, h) => x < rect.x + rect.w && x + w > rect.x && y < rect.y + rect.h && y + h > rect.y;
 
@@ -19,23 +17,25 @@ function fillCircle(ctx, x, y, r) {
   ctx.fill();
 }
 
-function fillEllipse(ctx, x, y, rx, ry) {
-  ctx.beginPath();
-  ctx.ellipse(x, y, rx, ry, 0, 0, TAU);
-  ctx.fill();
-}
-
-/** 월드(지형·시설)를 캔버스에 그린다. 3-2부터 서버가 보낸 유닛·건물이 여기에 더해진다. */
+/** 월드를 캔버스에 그린다: 지형 → 금광·마나 샘 → 건물 → 유닛 → 선택·배치 미리보기 → 표시 */
 export class Renderer {
-  constructor(canvas, map, camera, players) {
+  constructor(canvas, world, camera, players) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false });
-    this.map = map;
+    this.world = world;
+    this.map = world.map;
     this.camera = camera;
     this.players = players;
-    this.terrain = new TerrainCache(map);
+    this.terrain = new TerrainCache(world.map, world.tiles);
+    this.initialMineAmount = new Map(world.map.goldMines.map((m) => [m.id, m.amount]));
     this.dpr = 1;
+
+    // GameView가 매 프레임 채우는 상태
     this.hoverTile = null;
+    this.selection = new Set(); // 유닛·건물 id(숫자) 또는 금광 id(문자열)
+    this.ghost = null; // { type, x, y, valid }
+    this.dragBox = null; // 화면 좌표 { x0, y0, x1, y1 }
+    this.markers = [];
   }
 
   resize() {
@@ -47,23 +47,35 @@ export class Renderer {
     this.camera.setViewport(width, height);
   }
 
+  /** 명령을 내린 자리에 잠깐 퍼지는 고리. kind: 'move' | 'work' | 'place' */
+  addMarker(x, y, kind) {
+    this.markers.push({ x, y, kind, start: performance.now() });
+  }
+
   draw(timeMs) {
     const { ctx, camera } = this;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#0b0d12';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-    // 월드 좌표계. 이동량을 기기 픽셀 단위로 반올림해 청크 경계가 벌어지지 않게 한다
+    // 이동량을 기기 픽셀 단위로 반올림해 지형 청크 경계가 벌어지지 않게 한다
     const scale = camera.zoom * this.dpr;
     ctx.setTransform(scale, 0, 0, scale, -Math.round(camera.x * scale), -Math.round(camera.y * scale));
-
     const view = camera.visibleRect();
+
     this.terrain.draw(ctx, view);
     this.drawMapBorder(ctx);
-    this.drawGoldMines(ctx, view);
+    this.drawMines(ctx, view);
     this.drawWells(ctx, view, timeMs);
-    this.drawStarts(ctx, view);
+    this.drawBuildings(ctx, view, timeMs);
+    this.drawUnits(ctx, view, timeMs);
+    this.drawSelection(ctx);
+    this.drawGhost(ctx, timeMs);
+    this.drawMarkers(ctx, timeMs);
     this.drawHover(ctx);
+
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.drawDragBox(ctx);
   }
 
   drawMapBorder(ctx) {
@@ -72,31 +84,11 @@ export class Renderer {
     ctx.strokeRect(0, 0, this.map.width * S, this.map.height * S);
   }
 
-  drawGoldMines(ctx, view) {
+  drawMines(ctx, view) {
     for (const mine of this.map.goldMines) {
-      const x = mine.x * S;
-      const y = mine.y * S;
-      const w = mine.w * S;
-      const h = mine.h * S;
-      if (!intersects(view, x, y, w, h)) continue;
-      const cx = x + w / 2;
-      const cy = y + h / 2;
-
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
-      fillEllipse(ctx, cx, cy + h * 0.3, w * 0.46, h * 0.15);
-      ctx.fillStyle = '#5e554b';
-      fillEllipse(ctx, cx, cy + 6, w * 0.42, h * 0.34);
-      ctx.fillStyle = '#716658';
-      fillEllipse(ctx, cx - 10, cy - 2, w * 0.26, h * 0.24);
-      ctx.fillStyle = '#7d7163';
-      fillEllipse(ctx, cx + 12, cy + 4, w * 0.2, h * 0.18);
-
-      for (const [ox, oy, r] of GOLD_NUGGETS) {
-        ctx.fillStyle = '#d9a93a';
-        fillCircle(ctx, cx + ox, cy + oy, r);
-        ctx.fillStyle = '#f5d67a';
-        fillCircle(ctx, cx + ox - r * 0.3, cy + oy - r * 0.3, r * 0.4);
-      }
+      const amount = this.world.mineAmounts.get(mine.id);
+      if (amount === undefined || !intersects(view, mine.x * S, mine.y * S, mine.w * S, mine.h * S)) continue;
+      drawGoldMine(ctx, mine, amount, this.initialMineAmount.get(mine.id));
     }
   }
 
@@ -119,6 +111,8 @@ export class Renderer {
       ctx.fillStyle = glow;
       fillCircle(ctx, cx, cy, glowRadius);
 
+      if (this.world.isWellTaken(well.id)) continue; // 오벨리스크가 그 위에 그려진다
+
       ctx.fillStyle = '#4d535d';
       fillCircle(ctx, cx, cy, size * 0.44);
       ctx.fillStyle = '#23457a';
@@ -126,7 +120,6 @@ export class Renderer {
       ctx.fillStyle = `rgba(165, 205, 255, ${0.55 + pulse * 0.35})`;
       fillCircle(ctx, cx, cy, size * 0.14);
 
-      // 테두리의 룬 눈금이 천천히 돈다
       ctx.strokeStyle = primordial ? '#e7c25a' : '#a4bde8';
       ctx.lineWidth = 2;
       for (let i = 0; i < 8; i++) {
@@ -139,68 +132,116 @@ export class Renderer {
     }
   }
 
-  /** 시작 위치의 영주관 자리. 3-2에서 서버가 보낸 실제 건물로 바뀐다. */
-  drawStarts(ctx, view) {
-    for (const { slot, keep } of this.map.starts) {
-      const x = keep.x * S;
-      const y = keep.y * S;
-      const w = keep.w * S;
-      const h = keep.h * S;
-      if (!intersects(view, x - S * 3, y - S, w + S * 6, h + S * 2)) continue;
+  drawBuildings(ctx, view, timeMs) {
+    const visible = [...this.world.buildings.values()]
+      .filter((b) => intersects(view, b.x * S - S, b.y * S - S * 2, (b.size + 2) * S, (b.size + 3) * S))
+      .sort((a, b) => a.y + a.size - (b.y + b.size));
 
-      const cx = x + w / 2;
-      const cy = y + h / 2;
-
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-      ctx.fillRect(x + 10, y + h - 8, w - 12, 10);
-      ctx.fillStyle = '#7d766c';
-      ctx.fillRect(x + 6, y + 10, w - 12, h - 16);
-      ctx.fillStyle = '#948c80';
-      ctx.fillRect(x + 6, y + 10, w - 12, 6);
-
-      ctx.fillStyle = '#6a645b';
-      for (const [ox, oy] of [[2, 4], [w - 24, 4], [2, h - 26], [w - 24, h - 26]]) ctx.fillRect(x + ox, y + oy, 22, 22);
-
-      ctx.fillStyle = '#a39a8c';
-      ctx.fillRect(cx - 22, cy - 24, 44, 42);
-      ctx.fillStyle = '#b3aa9b';
-      ctx.fillRect(cx - 22, cy - 24, 44, 6);
-      ctx.fillStyle = '#4f4a43';
-      ctx.fillRect(cx - 7, cy + 4, 14, 14);
-
-      ctx.fillStyle = '#3a342d';
-      ctx.fillRect(cx - 1, cy - 50, 2, 28);
-      ctx.fillStyle = PLAYER_COLORS[slot];
-      ctx.beginPath();
-      ctx.moveTo(cx + 1, cy - 50);
-      ctx.lineTo(cx + 22, cy - 44);
-      ctx.lineTo(cx + 1, cy - 38);
-      ctx.closePath();
-      ctx.fill();
-
-      const player = this.players.find((p) => p.slot === slot);
-      if (player) this.drawLabel(ctx, `P${slot + 1} ${player.nickname}`, cx, y - 8, PLAYER_COLORS[slot]);
+    for (const b of visible) {
+      drawBuilding(ctx, b, PLAYER_COLORS[b.owner], timeMs, this.world.ages.get(b.owner) ?? 1);
+      if (b.type === 'keep') {
+        const player = this.players.find((p) => p.slot === b.owner);
+        if (player) drawLabel(ctx, `P${b.owner + 1} ${player.nickname}`, (b.x + b.size / 2) * S, b.y * S - 8, PLAYER_COLORS[b.owner]);
+      }
     }
   }
 
-  drawLabel(ctx, text, x, y, color) {
-    ctx.font = '600 13px "IBM Plex Sans KR", "Malgun Gothic", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    const width = ctx.measureText(text).width + 14;
-    ctx.fillStyle = 'rgba(10, 12, 16, 0.78)';
-    ctx.fillRect(x - width / 2, y - 20, width, 20);
-    ctx.fillStyle = color;
-    ctx.fillRect(x - width / 2, y - 20, 3, 20);
-    ctx.fillStyle = '#f2eee4';
-    ctx.fillText(text, x + 1, y - 3);
+  drawUnits(ctx, view, timeMs) {
+    const visible = [...this.world.units.values()]
+      .filter((u) => intersects(view, u.drawX * S - S, u.drawY * S - S, S * 2, S * 2))
+      .sort((a, b) => a.drawY - b.drawY);
+    for (const u of visible) drawUnit(ctx, u, PLAYER_COLORS[u.owner], timeMs);
+  }
+
+  drawSelection(ctx) {
+    for (const id of this.selection) {
+      if (typeof id === 'string') {
+        const mine = this.map.goldMines.find((m) => m.id === id);
+        if (!mine) continue;
+        ctx.strokeStyle = 'rgba(226, 181, 62, 0.95)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(mine.x * S + 2, mine.y * S + 2, mine.w * S - 4, mine.h * S - 4);
+        continue;
+      }
+
+      const unit = this.world.units.get(id);
+      if (unit) {
+        const x = unit.drawX * S;
+        const y = unit.drawY * S;
+        const mine = this.world.isMine(unit);
+        drawSelectionRing(ctx, x, y + 7, 11, mine);
+        drawHealthBar(ctx, x, y - 22, 20, unit.hp / UNITS[unit.type].hp);
+        continue;
+      }
+
+      const b = this.world.buildings.get(id);
+      if (b) {
+        const mine = this.world.isMine(b);
+        ctx.strokeStyle = mine ? 'rgba(120, 230, 140, 0.95)' : 'rgba(240, 120, 110, 0.95)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(b.x * S + 1, b.y * S + 1, b.size * S - 2, b.size * S - 2);
+        drawHealthBar(ctx, (b.x + b.size / 2) * S, b.y * S + b.size * S + 4, b.size * S * 0.6, b.hp / BUILDINGS[b.type].hp);
+      }
+    }
+  }
+
+  drawGhost(ctx, timeMs) {
+    const g = this.ghost;
+    if (!g) return;
+    const size = BUILDINGS[g.type].size * S;
+    const px = g.x * S;
+    const py = g.y * S;
+    const alpha = 0.22 + 0.06 * Math.sin(timeMs / 180);
+    ctx.fillStyle = g.valid ? `rgba(100, 220, 130, ${alpha})` : `rgba(235, 90, 80, ${alpha + 0.08})`;
+    ctx.fillRect(px, py, size, size);
+    ctx.strokeStyle = g.valid ? 'rgba(120, 235, 150, 0.95)' : 'rgba(245, 110, 100, 0.95)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + 1, py + 1, size - 2, size - 2);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < BUILDINGS[g.type].size; i++) {
+      ctx.beginPath();
+      ctx.moveTo(px + i * S, py);
+      ctx.lineTo(px + i * S, py + size);
+      ctx.moveTo(px, py + i * S);
+      ctx.lineTo(px + size, py + i * S);
+      ctx.stroke();
+    }
+    drawLabel(ctx, BUILDINGS[g.type].name, px + size / 2, py - 6, g.valid ? '#62c27f' : '#e0574c');
+  }
+
+  drawMarkers(ctx, timeMs) {
+    const now = performance.now();
+    this.markers = this.markers.filter((m) => now - m.start < MARKER_MS);
+    for (const m of this.markers) {
+      const t = (now - m.start) / MARKER_MS;
+      ctx.strokeStyle = `rgba(${MARKER_COLORS[m.kind]}, ${1 - t})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(m.x * S, m.y * S, 6 + t * 12, (6 + t * 12) * 0.5, 0, 0, TAU);
+      ctx.stroke();
+    }
   }
 
   drawHover(ctx) {
     const tile = this.hoverTile;
-    if (!tile || tile.x < 0 || tile.y < 0 || tile.x >= this.map.width || tile.y >= this.map.height) return;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+    if (!tile || this.ghost || tile.x < 0 || tile.y < 0 || tile.x >= this.map.width || tile.y >= this.map.height) return;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
     ctx.lineWidth = 1 / this.camera.zoom;
     ctx.strokeRect(tile.x * S, tile.y * S, S, S);
+  }
+
+  drawDragBox(ctx) {
+    const box = this.dragBox;
+    if (!box) return;
+    const x = Math.min(box.x0, box.x1);
+    const y = Math.min(box.y0, box.y1);
+    const w = Math.abs(box.x1 - box.x0);
+    const h = Math.abs(box.y1 - box.y0);
+    ctx.fillStyle = 'rgba(120, 230, 140, 0.12)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(120, 230, 140, 0.9)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w, h);
   }
 }

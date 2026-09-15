@@ -18,7 +18,7 @@ before(async () => {
 
 after(async () => {
   sockets.forEach((s) => s.close());
-  await new Promise((resolve) => server.io.close(resolve));
+  await server.close();
 });
 
 function player(name, token = `dev:${name}-test-0001`) {
@@ -68,6 +68,12 @@ test('두 명이 같은 방에 들어가 준비하면 게임이 시작된다', a
   assert.deepEqual(startA, startB);
   assert.deepEqual(startA.players.map((p) => p.nickname), ['alice', 'bob']);
   assert.equal(server.lobby.rooms.get(created.room.id).status, ROOM_STATUS.PLAYING);
+
+  // 경기가 시작되면 틱마다 스냅샷이 온다: 농노 4기씩, 영주관 1채씩, 시작 금 200
+  const [snap] = await once(alice, EV.GAME_SNAP);
+  assert.equal(snap.units.length, 8);
+  assert.equal(snap.buildings.length, 2);
+  assert.equal(snap.me[0], 200);
 });
 
 test('마지막 사람이 나가면 방이 사라진다', async () => {

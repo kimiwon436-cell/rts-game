@@ -211,6 +211,7 @@ function startGame({ roomId, mapId, players }) {
     'game',
     createGameView({
       canvas,
+      socket: state.socket,
       mapId,
       players,
       me: me(),

@@ -3,6 +3,7 @@ import { EV, ERR, ROOM_STATUS } from '@rune/shared/protocol.js';
 import { MAX_PLAYERS, ROOM_NAME_MAX, START_COUNTDOWN_SEC } from '@rune/shared/constants.js';
 import { DEFAULT_MAP_ID } from '@rune/shared/map/maps/index.js';
 import { cleanText } from './auth.js';
+import { Match } from '../game/Match.js';
 
 const LOBBY_CHANNEL = 'lobby';
 const channelOf = (roomId) => `room:${roomId}`;
@@ -59,6 +60,11 @@ export class Lobby {
     handle(EV.LOBBY_LEAVE, () => this.leave(socket));
     handle(EV.LOBBY_READY, (body) => this.setReady(socket, body));
 
+    // 게임 명령은 응답 없이 경기로 넘긴다. 거부되면 경기가 GAME_REJECT를 보낸다.
+    socket.on(EV.GAME_CMD, (cmd) => {
+      this.roomOf(socket)?.match?.enqueue(uid, cmd);
+    });
+
     socket.on('disconnect', (reason) => {
       console.log(`[접속 종료] uid=${uid} (${reason})`);
       if (this.socketOfUid.get(uid) !== socket) return; // 새 세션으로 교체된 소켓
@@ -79,6 +85,7 @@ export class Lobby {
       mapId: DEFAULT_MAP_ID,
       players: [],
       countdownTimer: null,
+      match: null,
       createdAt: Date.now(),
     };
     this.rooms.set(room.id, room);
@@ -145,9 +152,11 @@ export class Lobby {
     const room = this.rooms.get(roomId);
     if (!room) return;
     room.players = room.players.filter((p) => p.uid !== uid);
+    room.match?.removePlayer(uid);
     if (room.status === ROOM_STATUS.STARTING) this.cancelCountdown(room);
 
     if (room.players.length === 0) {
+      room.match?.stop();
       this.rooms.delete(room.id);
       console.log(`[방 삭제] ${room.id}`);
     } else {
@@ -186,9 +195,24 @@ export class Lobby {
       players: room.players.map(({ uid, nickname, slot }) => ({ uid, nickname, slot })),
     };
     this.io.to(channelOf(room.id)).emit(EV.GAME_START, payload);
+    room.match = new Match({
+      roomId: room.id,
+      mapId: room.mapId,
+      players: payload.players,
+      getSocket: (uid) => this.socketOfUid.get(uid),
+    });
+    room.match.start();
     this.broadcastRoom(room);
     this.broadcastList();
     console.log(`[게임 시작] ${room.id} ${payload.players.map((p) => `${p.nickname}(${p.uid})`).join(' vs ')}`);
+  }
+
+  /** 서버를 닫을 때 진행 중인 카운트다운과 경기를 모두 멈춘다 */
+  dispose() {
+    for (const room of this.rooms.values()) {
+      clearTimeout(room.countdownTimer);
+      room.match?.stop();
+    }
   }
 
   roomOf(socket) {

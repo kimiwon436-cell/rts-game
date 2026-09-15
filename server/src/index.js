@@ -9,7 +9,7 @@ if (config.authMode === 'firebase') {
   console.warn('[개발 모드] FIREBASE_SERVICE_ACCOUNT가 없어 게스트 토큰(dev:...)으로 인증합니다.');
 }
 
-const { httpServer, io } = createGameServer({
+const { httpServer, close } = createGameServer({
   authMode: config.authMode,
   clientOrigins: config.clientOrigins,
 });
@@ -20,7 +20,7 @@ httpServer.listen(config.port, () => {
 
 function shutdown(signal) {
   console.log(`[서버] ${signal} — 종료합니다`);
-  io.close(() => process.exit(0));
+  close().then(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));

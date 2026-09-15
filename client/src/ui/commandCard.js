@@ -1,0 +1,290 @@
+import { PLAYER_COLORS } from '@rune/shared/constants.js';
+import { BUILDINGS, BUILD_MENU } from '@rune/shared/data/buildings.js';
+import { AGES, MAX_AGE, RESOURCES, RESOURCE_NAMES } from '@rune/shared/data/economy.js';
+import { MARKET, buyCost, sellGain } from '@rune/shared/data/market.js';
+import { UNITS, WORKER } from '@rune/shared/data/units.js';
+import { UNIT_STATE } from '@rune/shared/protocol.js';
+import { missingResource } from '@rune/shared/rules/costs.js';
+import { h } from './dom.js';
+
+const STATE_TEXT = {
+  [UNIT_STATE.IDLE]: '대기 중',
+  [UNIT_STATE.MOVE]: '이동 중',
+  [UNIT_STATE.ATTACK]: '공격 중',
+  [UNIT_STATE.GATHER]: '채집 중',
+  [UNIT_STATE.RETURN]: '자원 운반 중',
+  [UNIT_STATE.BUILD]: '건설 중',
+};
+
+/**
+ * 선택한 대상의 정보와 명령 버튼 (화면 아래 가운데).
+ * 버튼 구성이 바뀔 때만 DOM을 다시 만들고, 체력·진행도·상태 글자는 제자리에서 갱신한다.
+ *
+ * onAction으로 넘기는 값:
+ * { kind: 'build', type } | { kind: 'stop' } | { kind: 'ageUp' } | { kind: 'cancelAgeUp' }
+ * | { kind: 'cancelBuild', id } | { kind: 'trade', resource, action }
+ */
+export function createCommandCard({ onAction }) {
+  const info = h('div', { class: 'cc-info' });
+  const grid = h('div', { class: 'cc-grid' });
+  const el = h('section', { class: 'command-card', 'aria-label': '선택한 대상과 명령' }, info, grid);
+
+  let signature = '';
+  let hotkeys = new Map();
+  let refs = {};
+
+  function update(view) {
+    const model = describe(view);
+    const next = JSON.stringify({ ...model, live: liveShape(model.live) });
+    if (next !== signature) {
+      signature = next;
+      rebuild(model);
+    }
+    applyLive(model.live);
+  }
+
+  function rebuild(model) {
+    hotkeys = new Map();
+    refs = {};
+
+    const rows = [
+      h(
+        'div',
+        { class: 'cc-title-row' },
+        model.color ? h('i', { class: 'swatch', style: `--c: ${model.color}` }) : null,
+        h('strong', { class: 'cc-title' }, model.title),
+      ),
+    ];
+    if (model.subtitle) rows.push(h('p', { class: 'cc-sub' }, model.subtitle));
+    if (model.live.hp) {
+      refs.hpFill = h('span', { class: 'meter-fill' });
+      refs.hpText = h('span', { class: 'meter-text' });
+      rows.push(h('div', { class: 'meter', role: 'img', 'aria-label': '체력' }, refs.hpFill, refs.hpText));
+    }
+    if (model.live.progress != null) {
+      refs.progressFill = h('span', { class: 'meter-fill is-progress' });
+      refs.progressText = h('span', { class: 'meter-text' });
+      rows.push(h('div', { class: 'meter', role: 'img', 'aria-label': '진행도' }, refs.progressFill, refs.progressText));
+    }
+    refs.text = h('p', { class: 'cc-text' });
+    rows.push(refs.text);
+    if (model.hint) rows.push(h('p', { class: 'cc-hint' }, model.hint));
+    info.replaceChildren(...rows);
+
+    grid.replaceChildren(...model.buttons.map(makeButton));
+  }
+
+  function makeButton(btn) {
+    hotkeys.set(btn.key, btn);
+    const costEntries = btn.cost ? RESOURCES.filter((r) => btn.cost[r]) : [];
+    const tooltip = [
+      `${btn.label} (${btn.key})`,
+      costEntries.length ? costEntries.map((r) => `${RESOURCE_NAMES[r]} ${btn.cost[r]}`).join(' · ') : null,
+      btn.note,
+    ]
+      .filter(Boolean)
+      .join('\n');
+    return h(
+      'button',
+      {
+        class: btn.short ? 'cc-btn is-short' : 'cc-btn',
+        type: 'button',
+        disabled: btn.disabled,
+        title: tooltip,
+        onClick: () => onAction(btn.action),
+      },
+      h('span', { class: 'cc-key' }, btn.key),
+      h('span', { class: 'cc-label' }, btn.label),
+      costEntries.length
+        ? h('span', { class: 'cc-cost' }, ...costEntries.map((r) => h('span', { class: `c-${r}` }, btn.cost[r])))
+        : null,
+      btn.note && !costEntries.length ? h('span', { class: 'cc-note' }, btn.note) : null,
+    );
+  }
+
+  function applyLive(live) {
+    if (refs.hpFill && live.hp) {
+      const [current, max] = live.hp;
+      refs.hpFill.style.width = `${Math.max(0, Math.min(1, current / max)) * 100}%`;
+      refs.hpText.textContent = `${current} / ${max}`;
+    }
+    if (refs.progressFill && live.progress != null) {
+      refs.progressFill.style.width = `${live.progress * 100}%`;
+      refs.progressText.textContent = `${live.progressLabel} ${Math.floor(live.progress * 100)}%`;
+    }
+    if (refs.text) refs.text.textContent = live.text ?? '';
+  }
+
+  /** 명령 단축키. 한글 입력 상태에서도 되도록 물리 키(e.code)로 판정한다 */
+  function handleKey(event) {
+    if (!event.code.startsWith('Key') || event.ctrlKey || event.metaKey || event.altKey) return false;
+    const btn = hotkeys.get(event.code.slice(3));
+    if (!btn || btn.disabled) return false;
+    onAction(btn.action);
+    return true;
+  }
+
+  return { el, update, handleKey };
+}
+
+const liveShape = (live) => ({ hp: Boolean(live.hp), progress: live.progress != null, progressLabel: live.progressLabel });
+
+const ownerName = (players, slot) => {
+  const player = players.find((p) => p.slot === slot);
+  return player ? `P${slot + 1} ${player.nickname}` : `P${slot + 1}`;
+};
+
+/** 선택 상태를 화면에 그릴 모델로 바꾼다 */
+function describe({ world, selection, players }) {
+  const ids = [...selection];
+  if (ids.length === 0 || !world.ready) {
+    return {
+      title: '선택한 대상 없음',
+      hint: '클릭해서 선택, 드래그로 여러 유닛 선택, 우클릭으로 명령',
+      buttons: [],
+      live: {},
+    };
+  }
+
+  if (typeof ids[0] === 'string') {
+    const amount = world.mineAmounts.get(ids[0]) ?? 0;
+    return {
+      title: '금광',
+      hint: '농노를 선택하고 금광을 우클릭하면 캡니다',
+      buttons: [],
+      live: { text: `남은 금 ${amount.toLocaleString('ko-KR')}` },
+    };
+  }
+
+  const units = ids.map((id) => world.units.get(id)).filter(Boolean);
+  if (units.length) return describeUnits(world, units, players);
+  const building = world.buildings.get(ids[0]);
+  if (building) return describeBuilding(world, building, players);
+  return { title: '선택한 대상 없음', buttons: [], live: {} };
+}
+
+function describeUnits(world, units, players) {
+  const first = units[0];
+  const def = UNITS[first.type];
+  const model = {
+    title: units.length === 1 ? def.name : `${def.name} ${units.length}기`,
+    subtitle: ownerName(players, first.owner),
+    color: PLAYER_COLORS[first.owner],
+    buttons: [],
+    live: units.length === 1 ? { hp: [first.hp, def.hp], text: unitStatus(first) } : { text: groupStatus(units) },
+  };
+  if (!world.isMine(first)) return model;
+
+  if (units.some((u) => UNITS[u.type].worker)) {
+    const me = world.me;
+    model.buttons = BUILD_MENU.map((type) => {
+      const b = BUILDINGS[type];
+      const locked = me.age < b.age;
+      return {
+        key: b.hotkey,
+        label: b.name,
+        cost: b.cost,
+        disabled: locked,
+        short: !locked && missingResource(me, b.cost) !== null,
+        note: locked ? `${AGES[b.age].name} 필요` : null,
+        action: { kind: 'build', type },
+      };
+    });
+    model.hint = '건물을 고른 뒤 땅을 클릭 · Shift로 연달아 짓기 · Esc 취소';
+  }
+  model.buttons.push({ key: 'H', label: '정지', action: { kind: 'stop' } });
+  return model;
+}
+
+function unitStatus(unit) {
+  const state = STATE_TEXT[unit.state] ?? '';
+  if (!unit.carryKind || unit.carryAmount === 0) return state;
+  return `${state} · ${RESOURCE_NAMES[unit.carryKind]} ${unit.carryAmount}/${WORKER.carryCapacity}`;
+}
+
+function groupStatus(units) {
+  const counts = new Map();
+  for (const u of units) counts.set(u.state, (counts.get(u.state) ?? 0) + 1);
+  return [...counts].map(([state, n]) => `${STATE_TEXT[state]} ${n}`).join(' · ');
+}
+
+function describeBuilding(world, b, players) {
+  const def = BUILDINGS[b.type];
+  const age = world.ages.get(b.owner) ?? 1;
+  const model = {
+    title: b.type === 'keep' ? AGES[age].keepName : def.name,
+    subtitle: ownerName(players, b.owner),
+    color: PLAYER_COLORS[b.owner],
+    buttons: [],
+    live: { hp: [b.hp, def.hp] },
+  };
+  const mine = world.isMine(b);
+
+  if (!b.complete) {
+    model.live.progress = b.progress;
+    model.live.progressLabel = b.started ? '건설 중' : '농노를 기다리는 중';
+    if (mine) model.buttons.push({ key: 'C', label: '건설 취소', note: '남은 만큼 환불', action: { kind: 'cancelBuild', id: b.id } });
+    return model;
+  }
+
+  model.hint = buildingHint(world, b, def);
+  if (!mine) return model;
+  const me = world.me;
+
+  if (b.type === 'keep') {
+    if (me.ageTarget) {
+      model.live.progress = me.ageProgress;
+      model.live.progressLabel = `${AGES[me.ageTarget].name}로 발전 중`;
+      model.buttons.push({ key: 'C', label: '발전 취소', note: '비용 전액 환불', action: { kind: 'cancelAgeUp' } });
+    } else if (me.age < MAX_AGE) {
+      const next = AGES[me.age + 1];
+      const missingBuilding = next.requires?.find((type) => !world.hasCompleted(type));
+      model.buttons.push({
+        key: 'U',
+        label: `${next.name}로 발전`,
+        cost: next.cost,
+        disabled: Boolean(missingBuilding),
+        short: !missingBuilding && missingResource(me, next.cost) !== null,
+        note: missingBuilding ? `${BUILDINGS[missingBuilding].name} 필요` : `${next.time}초`,
+        action: { kind: 'ageUp' },
+      });
+    }
+  }
+
+  if (b.type === 'market') {
+    const trades = [
+      ['Q', 'wood', 'buy'],
+      ['W', 'wood', 'sell'],
+      ['E', 'mana', 'buy'],
+      ['R', 'mana', 'sell'],
+    ];
+    for (const [key, resource, action] of trades) {
+      const price = me.market[resource];
+      const buying = action === 'buy';
+      const cost = buying ? { gold: buyCost(price) } : { [resource]: MARKET.lot };
+      model.buttons.push({
+        key,
+        label: `${RESOURCE_NAMES[resource]} ${buying ? '사기' : '팔기'}`,
+        cost,
+        note: buying ? `${RESOURCE_NAMES[resource]} +${MARKET.lot}` : `금 +${sellGain(price)}`,
+        short: missingResource(me, cost) !== null,
+        action: { kind: 'trade', resource, action },
+      });
+    }
+  }
+  return model;
+}
+
+function buildingHint(world, b, def) {
+  if (b.type === 'obelisk') {
+    const well = world.map.wells.find((w) => w.x === b.x && w.y === b.y);
+    return `마나 +${well?.rate ?? 0}/초`;
+  }
+  const parts = [];
+  if (def.dropoff) parts.push('금·목재 반납');
+  if (def.pop) parts.push(`인구 +${def.pop}`);
+  if (def.trains && b.type !== 'keep') parts.push(`훈련: ${def.trains.map((t) => UNITS[t].name).join(', ')}`);
+  if (def.attack) parts.push(`관통 ${def.attack.damage} · 사거리 ${def.attack.range}`);
+  if (def.market) parts.push('금으로 목재·마나를 사고팝니다');
+  return parts.join(' · ');
+}
