@@ -1,0 +1,15 @@
+node_modules/
+dist/
+
+# 환경 변수와 비밀 키
+.env
+.env.*
+!.env.example
+serviceAccount*.json
+*-firebase-adminsdk-*.json
+
+# 로그와 로컬 설정
+*.log
+firebase-debug.log
+.claude/settings.local.json
+.DS_Store
