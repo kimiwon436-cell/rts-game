@@ -18,6 +18,7 @@ export const EV = Object.freeze({
   GAME_SNAP: 'game:snap', // 틱마다 보내는 상태 (shared/src/snapshot.js)
   GAME_REJECT: 'game:reject', // { seq, reason }
   GAME_END: 'game:end', // { winner, reason, durationSec, players }
+  GAME_RESUME: 'game:resume', // 끊겼다 돌아온 플레이어에게: { roomId, mapId, players }
   SESSION_REPLACED: 'session:replaced',
 });
 

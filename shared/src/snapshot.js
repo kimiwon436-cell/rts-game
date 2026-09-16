@@ -1,9 +1,9 @@
 // 스냅샷 인코딩. 서버는 encode*로 배열을 만들고 클라이언트는 decode*로 푼다.
-// 3-2는 매 틱 전체 상태를 보낸다. 3-5에서 바뀐 부분만 보내는 델타로 바꾼다.
+// 틱마다 바뀐 것만 보낸다 (아래 델타 절). 첫 입장·재접속 때만 전체 상태를 보낸다.
 //
 // 스냅샷 모양:
-// { t, me, own, players: [[slot, age]], units: [...], buildings: [...], mines: [[mineId, amount]], ev: [[code, ...]] }
-// me와 own은 받는 플레이어의 것만 들어 있다.
+// { t, full?, players?, addU?, updU?, addB?, updB?, del?, mines?, ev?, me?, own? }
+// me와 own은 받는 플레이어의 것만 들어 있고, 바뀌지 않은 항목은 아예 오지 않는다.
 
 import { TICK_MS } from './constants.js';
 import { UNIT_TYPES } from './data/units.js';
@@ -138,4 +138,87 @@ export function decodePlayer(a) {
     ageProgress: a[7] / 1000,
     market: { wood: a[8], mana: a[9] },
   };
+}
+
+// ---------- 델타 (3-5) ----------
+// 틱마다 바뀐 필드만 보낸다. 서버는 지난번에 보낸 인코딩과 비교해 마스크를 만들고,
+// 클라이언트는 마스크를 보고 그 필드만 덮어쓴다.
+
+export const UNIT_DELTA = Object.freeze({ POS: 1, HP: 2, STATE: 4, CARRY: 8, FLAGS: 16 });
+export const BUILDING_DELTA = Object.freeze({ HP: 1, PROGRESS: 2, FLAGS: 4 });
+
+/** 바뀐 필드만 담은 [id, 마스크, ...값]. 바뀐 게 없으면 null */
+export function diffUnit(previous, current) {
+  let mask = 0;
+  const values = [];
+  if (previous[3] !== current[3] || previous[4] !== current[4]) {
+    mask |= UNIT_DELTA.POS;
+    values.push(current[3], current[4]);
+  }
+  if (previous[5] !== current[5]) {
+    mask |= UNIT_DELTA.HP;
+    values.push(current[5]);
+  }
+  if (previous[6] !== current[6]) {
+    mask |= UNIT_DELTA.STATE;
+    values.push(current[6]);
+  }
+  if (previous[7] !== current[7] || previous[8] !== current[8]) {
+    mask |= UNIT_DELTA.CARRY;
+    values.push(current[7], current[8]);
+  }
+  if (previous[9] !== current[9]) {
+    mask |= UNIT_DELTA.FLAGS;
+    values.push(current[9]);
+  }
+  return mask ? [current[0], mask, ...values] : null;
+}
+
+/** 델타를 클라이언트 유닛 객체에 적용한다. 위치가 바뀌었으면 true */
+export function applyUnitDelta(unit, delta) {
+  const mask = delta[1];
+  let i = 2;
+  const moved = Boolean(mask & UNIT_DELTA.POS);
+  if (moved) {
+    unit.x = delta[i++] / POS_SCALE;
+    unit.y = delta[i++] / POS_SCALE;
+  }
+  if (mask & UNIT_DELTA.HP) unit.hp = delta[i++];
+  if (mask & UNIT_DELTA.STATE) unit.state = delta[i++];
+  if (mask & UNIT_DELTA.CARRY) {
+    unit.carryKind = CARRY_KINDS[delta[i++]];
+    unit.carryAmount = delta[i++];
+  }
+  if (mask & UNIT_DELTA.FLAGS) unit.shieldWall = Boolean(delta[i++] & 1);
+  return moved;
+}
+
+export function diffBuilding(previous, current) {
+  let mask = 0;
+  const values = [];
+  if (previous[5] !== current[5]) {
+    mask |= BUILDING_DELTA.HP;
+    values.push(current[5]);
+  }
+  if (previous[6] !== current[6]) {
+    mask |= BUILDING_DELTA.PROGRESS;
+    values.push(current[6]);
+  }
+  if (previous[7] !== current[7]) {
+    mask |= BUILDING_DELTA.FLAGS;
+    values.push(current[7]);
+  }
+  return mask ? [current[0], mask, ...values] : null;
+}
+
+export function applyBuildingDelta(building, delta) {
+  const mask = delta[1];
+  let i = 2;
+  if (mask & BUILDING_DELTA.HP) building.hp = delta[i++];
+  if (mask & BUILDING_DELTA.PROGRESS) building.progress = delta[i++] / 1000;
+  if (mask & BUILDING_DELTA.FLAGS) {
+    const flags = delta[i++];
+    building.complete = Boolean(flags & 1);
+    building.started = Boolean(flags & 2);
+  }
 }

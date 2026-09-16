@@ -92,6 +92,10 @@ function openSocket() {
     if (state.view === 'room') state.screen.setCountdown(seconds);
   });
   socket.on(EV.GAME_START, startGame);
+  socket.on(EV.GAME_RESUME, (payload) => {
+    toast('경기에 다시 들어왔습니다.');
+    startGame(payload);
+  });
   socket.on(EV.SESSION_REPLACED, () => {
     showTitle('다른 탭에서 같은 계정으로 접속해 이 탭의 연결이 끊어졌습니다.');
   });
@@ -116,9 +120,9 @@ function openSocket() {
         resolve();
         return;
       }
-      // 재연결: 서버는 끊긴 플레이어를 방에서 뺐으므로 로비에서 다시 시작한다
+      // 재연결: 방에 남아 있었다면 서버가 LOBBY_ROOM(경기 중이면 GAME_RESUME도)으로 알려 준다.
+      // 자리가 이미 없어졌으면 LOBBY_ROOM null이 와서 로비로 돌아간다.
       toast('서버에 다시 연결했습니다.');
-      if (state.view !== 'lobby') showLobby();
     });
 
     socket.on('connect_error', (err) => {
@@ -190,7 +194,7 @@ async function leaveRoom() {
 function onRoom(room) {
   state.room = room;
   if (!room) {
-    if (state.view === 'room') showLobby();
+    if (state.view === 'room' || state.view === 'game') showLobby();
     return;
   }
   if (state.view === 'game') {

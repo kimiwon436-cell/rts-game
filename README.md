@@ -10,8 +10,8 @@
 | 폴더 | 내용 |
 |---|---|
 | `shared/` | 서버·클라이언트 공용 코드: 상수, 소켓 프로토콜, 맵 생성 |
-| `server/` | Node.js + Socket.IO 게임 서버: 인증, 로비, 경기 시뮬레이션(채집·건설·A* 길찾기) |
-| `client/` | Vite + Canvas 클라이언트: 로그인, 로비, 맵·유닛·건물 렌더링, 선택과 명령 |
+| `server/` | Node.js + Socket.IO 게임 서버: 인증, 로비, 경기 시뮬레이션(채집·건설·A* 길찾기·전투), 델타 스냅샷, 전적 저장 |
+| `client/` | Vite + Canvas 클라이언트: 로그인, 로비, 맵·유닛·건물 렌더링, 선택과 명령, 스냅샷 보간 |
 | `docs/` | 기획서, 기술 설계서 |
 
 ## 로컬에서 실행하기
@@ -46,7 +46,7 @@ npm run dev
 npm test
 ```
 
-맵 대칭·연결성 테스트와 로비(입장·준비·시작) 통합 테스트가 돌아갑니다.
+맵 대칭·연결성, A*, 이동·생산·전투·승패 시뮬레이션, 로비(입장·준비·시작·재접속), 델타 동기화와 보간 테스트가 돌아갑니다.
 
 ## Firebase 연결하기
 
@@ -66,6 +66,16 @@ npm test
    ```
 
 서버와 클라이언트는 **둘 다 Firebase 모드이거나 둘 다 개발 모드**여야 접속됩니다.
+개발 모드에서는 전적이 저장되지 않을 뿐, 게임은 똑같이 돌아갑니다.
+
+경기가 끝나면 서버가 `matches/{matchId}` 기록 한 건과 참가자별 `users/{uid}` 누적 전적(판수·승·패)을 배치로 한 번 씁니다.
+실시간 상태는 Firestore로 가지 않습니다.
+
+### 연결이 끊기면
+
+경기 중에 끊겨도 **60초 동안 자리가 유지**되고, 그 사이 경기는 계속 돌아갑니다.
+같은 계정으로 다시 접속하면 현재 상황을 통째로 받아 이어서 하고, 60초가 지나면 패배 처리됩니다.
+서버의 `RECONNECT_GRACE_SEC` 환경 변수로 시간을 바꿀 수 있습니다.
 
 ## 배포하기
 
@@ -81,7 +91,7 @@ npm test
 | Region | Singapore |
 | Health Check Path | `/health` |
 
-환경 변수: `NODE_ENV=production`, `CLIENT_ORIGINS=https://<사이트 이름>.netlify.app`, `FIREBASE_SERVICE_ACCOUNT=<Base64 값>`
+환경 변수: `NODE_ENV=production`, `CLIENT_ORIGINS=https://<사이트 이름>.netlify.app`, `FIREBASE_SERVICE_ACCOUNT=<Base64 값>` (선택: `RECONNECT_GRACE_SEC=60`)
 
 ### 클라이언트 — Netlify
 

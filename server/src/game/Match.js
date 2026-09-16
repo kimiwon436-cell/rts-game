@@ -5,7 +5,7 @@ import { World } from './World.js';
 import { stepWorld } from './Simulation.js';
 import { sanitizeCommand } from './systems/commands.js';
 import { defeatPlayer } from './systems/victory.js';
-import { buildSharedFrame, snapshotFor } from './sync/snapshot.js';
+import { SnapshotFeed } from './sync/snapshot.js';
 
 const MAX_CATCH_UP = 5;
 const MAX_QUEUE = 200;
@@ -17,19 +17,24 @@ export class Match {
    * @param {object} p
    * @param {string} p.roomId
    * @param {string} p.mapId
-   * @param {Array<{ uid: string, nickname: string, slot: number }>} p.players
-   * @param {(uid: string) => import('socket.io').Socket | undefined} p.getSocket
-   * @param {(result: object) => void} [p.onEnd] 경기가 끝나면 한 번 불린다
+   * @param {Array} p.players [{ uid, nickname, slot }]
+   * @param {Function} p.getSocket uid로 소켓을 찾는 함수 (없으면 undefined)
+   * @param {Function} [p.onEnd] 경기가 끝나면 (result, record)로 한 번 불린다
    */
   constructor({ roomId, mapId, players, getSocket, onEnd }) {
     this.roomId = roomId;
+    this.mapId = mapId;
     this.getSocket = getSocket;
     this.onEnd = onEnd;
     this.ended = false;
+    this.startedAt = Date.now();
     this.world = new World(loadMap(mapId), players);
+    this.feed = new SnapshotFeed();
     this.slotOfUid = new Map(players.map((p) => [p.uid, p.slot]));
     this.uidOfSlot = new Map(players.map((p) => [p.slot, p.uid]));
     this.buckets = new Map(players.map((p) => [p.uid, { tokens: RATE_LIMIT.capacity, last: Date.now() }]));
+    /** 다음 틱에 전체 상태를 받아야 하는 플레이어 (처음 입장·재접속) */
+    this.needsFull = new Set(players.map((p) => p.uid));
     this.queue = [];
     this.timer = null;
     this.running = false;
@@ -77,10 +82,16 @@ export class Match {
     this.queue.push({ slot, cmd });
   }
 
-  /** 경기 중에 나간 플레이어는 패배한다. 다음 틱에 결과가 정해진다. (연결이 끊겼을 때의 재접속 유예는 3-5) */
+  /** 끊겼다 돌아온 플레이어에게는 다음 틱에 전체 상태를 보낸다 */
+  markNeedsFull(uid) {
+    if (this.slotOfUid.has(uid)) this.needsFull.add(uid);
+  }
+
+  /** 유예 시간 안에 돌아오지 못했거나 경기 중에 나간 플레이어는 패배한다 */
   removePlayer(uid) {
     const slot = this.slotOfUid.get(uid);
     this.slotOfUid.delete(uid);
+    this.needsFull.delete(uid);
     if (slot !== undefined && !this.ended) defeatPlayer(this.world, this.world.players[slot], VICTORY_REASON.LEFT);
   }
 
@@ -90,28 +101,44 @@ export class Match {
     const { rejects, events } = stepWorld(this.world, commands);
     for (const { slot, seq, reason } of rejects) this.sendReject(this.uidOfSlot.get(slot), seq, reason);
 
-    const frame = buildSharedFrame(this.world, events);
+    const delta = this.feed.buildDelta(this.world, events);
     for (const [uid, slot] of this.slotOfUid) {
-      this.getSocket(uid)?.emit(EV.GAME_SNAP, snapshotFor(frame, this.world, slot));
+      const socket = this.getSocket(uid);
+      if (!socket) continue; // 끊긴 사이에는 보내지 않고, 돌아오면 전체 상태를 준다
+      if (this.needsFull.has(uid)) {
+        this.needsFull.delete(uid);
+        socket.emit(EV.GAME_SNAP, this.feed.full(this.world, slot));
+      } else {
+        socket.emit(EV.GAME_SNAP, this.feed.personalize(delta, this.world, slot));
+      }
     }
     if (this.world.result && !this.ended) this.finish();
   }
 
-  /** 결과를 남은 플레이어에게 보내고 틱을 멈춘다 */
+  /** 결과를 플레이어에게 보내고 틱을 멈춘다. record는 전적 저장용(uid 포함)이다. */
   finish() {
     this.ended = true;
     this.stop();
     const { winner, reason, tick } = this.world.result;
+    const durationSec = Math.round((tick * TICK_MS) / 1000);
+    const players = this.world.players.filter(Boolean);
     const result = {
       winner,
       reason,
-      durationSec: Math.round((tick * TICK_MS) / 1000),
-      players: this.world.players
-        .filter(Boolean)
-        .map((p) => ({ slot: p.slot, nickname: p.nickname, defeated: p.defeated })),
+      durationSec,
+      players: players.map(({ slot, nickname, defeated }) => ({ slot, nickname, defeated })),
     };
-    for (const uid of this.slotOfUid.keys()) this.getSocket(uid)?.emit(EV.GAME_END, result);
-    this.onEnd?.(result);
+    const record = {
+      matchId: `${this.roomId}-${this.startedAt}`,
+      mapId: this.mapId,
+      startedAt: this.startedAt,
+      durationSec,
+      reason,
+      winner,
+      players: players.map(({ slot, uid, nickname, defeated }) => ({ slot, uid, nickname, defeated })),
+    };
+    for (const uid of this.uidOfSlot.values()) this.getSocket(uid)?.emit(EV.GAME_END, result);
+    this.onEnd?.(result, record);
   }
 
   sendReject(uid, seq, reason) {

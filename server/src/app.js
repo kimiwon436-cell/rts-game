@@ -14,7 +14,7 @@ function handleHttp(req, res) {
 }
 
 /** HTTP 서버와 Socket.IO를 만들고 인증·로비를 연결한다. listen은 호출한 쪽에서 한다. */
-export function createGameServer({ authMode, clientOrigins, countdownSec }) {
+export function createGameServer({ authMode, clientOrigins, countdownSec, reconnectGraceSec }) {
   const httpServer = createServer(handleHttp);
   const io = new Server(httpServer, {
     cors: { origin: clientOrigins },
@@ -23,7 +23,7 @@ export function createGameServer({ authMode, clientOrigins, countdownSec }) {
 
   io.use(createAuthMiddleware(authMode));
 
-  const lobby = new Lobby(io, { countdownSec });
+  const lobby = new Lobby(io, { countdownSec, reconnectGraceSec });
   io.on('connection', (socket) => {
     console.log(`[접속] uid=${socket.data.uid} 닉네임=${socket.data.nickname}`);
     lobby.attach(socket);

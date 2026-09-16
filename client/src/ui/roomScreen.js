@@ -45,7 +45,9 @@ export function createRoomScreen({ me, onReady, onLeave }) {
       { class: 'slot', style },
       h('span', { class: 'slot-label' }, tags.join(' · ')),
       h('span', { class: 'slot-name' }, player.nickname),
-      h('span', { class: player.ready ? 'slot-state is-ready' : 'slot-state' }, player.ready ? '준비 완료' : '준비 중'),
+      player.connected === false
+        ? h('span', { class: 'slot-state' }, '연결 끊김 · 재접속 기다리는 중')
+        : h('span', { class: player.ready ? 'slot-state is-ready' : 'slot-state' }, player.ready ? '준비 완료' : '준비 중'),
     );
   }
 

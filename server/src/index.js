@@ -12,6 +12,7 @@ if (config.authMode === 'firebase') {
 const { httpServer, close } = createGameServer({
   authMode: config.authMode,
   clientOrigins: config.clientOrigins,
+  reconnectGraceSec: config.reconnectGraceSec,
 });
 
 httpServer.listen(config.port, () => {

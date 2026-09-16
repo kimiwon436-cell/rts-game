@@ -84,9 +84,19 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
     toast(errorMessage(reason), { error: true });
   };
   const onEnd = (result) => showResult(result);
+  // 내 연결이 끊긴 동안은 화면이 멈춘다. 소켓이 스스로 다시 붙고, 붙으면 서버가 GAME_RESUME으로 이어 준다.
+  const onOffline = () => {
+    netBanner.textContent = '서버와 연결이 끊겼습니다. 다시 연결하는 중…';
+    netBanner.hidden = false;
+  };
+  const onOnline = () => {
+    netBanner.hidden = true;
+  };
   socket.on(EV.GAME_SNAP, onSnapshot);
   socket.on(EV.GAME_REJECT, onReject);
   socket.on(EV.GAME_END, onEnd);
+  socket.on('disconnect', onOffline);
+  socket.on('connect', onOnline);
 
   world.onTreeFelled = (tile) => {
     renderer.terrain.invalidateTile(tile % map.width, Math.floor(tile / map.width));
@@ -449,6 +459,7 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
   const tileInfo = h('span', { class: 'mono' }, '—');
   const zoomInfo = h('span', { class: 'mono' }, '100%');
   const banner = h('div', { class: 'hud-banner', role: 'status', hidden: true });
+  const netBanner = h('div', { class: 'hud-banner is-danger', role: 'status', hidden: true });
   const crownBanner = h('div', { class: 'hud-banner', role: 'status', hidden: true });
 
   const surrenderConfirm = h(
@@ -517,7 +528,7 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
       versus,
       h('div', { class: 'hud-right' }, ping, surrenderButton, surrenderConfirm),
     ),
-    h('div', { class: 'hud-banners' }, crownBanner, banner),
+    h('div', { class: 'hud-banners' }, crownBanner, netBanner, banner),
     h('div', { class: 'hud-minimap' }, minimap.canvas),
     commandCard.el,
     h(
@@ -622,15 +633,17 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
 
   /** 방 상태가 바뀌면(상대가 나가면) HUD에 표시한다 */
   function updateRoom(room) {
-    const present = new Set(room.players.map((p) => p.uid));
-    let opponentLeft = false;
+    const present = new Map(room.players.map((p) => [p.uid, p]));
+    let message = '';
     for (const [uid, tag] of playerTags) {
-      const gone = !present.has(uid);
-      tag.classList.toggle('is-gone', gone);
-      if (gone && uid !== me.uid) opponentLeft = true;
+      const player = present.get(uid);
+      const offline = player ? player.connected === false : true;
+      tag.classList.toggle('is-gone', offline);
+      if (uid === me.uid || !offline) continue;
+      message = player ? '상대의 연결이 끊겼습니다. 돌아오기를 기다리는 중…' : '상대가 경기를 떠났습니다.';
     }
-    banner.textContent = '상대가 경기를 떠났습니다.';
-    banner.hidden = !opponentLeft;
+    banner.textContent = message;
+    banner.hidden = !message;
   }
 
   return {
@@ -645,6 +658,8 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
       socket.off(EV.GAME_SNAP, onSnapshot);
       socket.off(EV.GAME_REJECT, onReject);
       socket.off(EV.GAME_END, onEnd);
+      socket.off('disconnect', onOffline);
+      socket.off('connect', onOnline);
       input.destroy();
       canvas.hidden = true;
     },

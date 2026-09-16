@@ -4,6 +4,7 @@ import { MAX_PLAYERS, ROOM_NAME_MAX, START_COUNTDOWN_SEC } from '@rune/shared/co
 import { DEFAULT_MAP_ID } from '@rune/shared/map/maps/index.js';
 import { cleanText } from './auth.js';
 import { Match } from '../game/Match.js';
+import { saveMatchResult } from '../persistence/matches.js';
 
 const LOBBY_CHANNEL = 'lobby';
 const channelOf = (roomId) => `room:${roomId}`;
@@ -12,13 +13,15 @@ const ok = (data = {}) => ({ ok: true, ...data });
 const fail = (error) => ({ ok: false, error });
 
 /**
- * 방 목록, 입장, 준비, 시작 카운트다운을 관리한다. 상태는 서버 메모리에만 있다.
+ * 방 목록, 입장, 준비, 시작 카운트다운, 경기 수명 관리. 상태는 서버 메모리에만 있다.
  * 한 uid는 동시에 소켓 하나, 방 하나에만 속한다.
+ * 경기 중에 연결이 끊기면 유예 시간 동안 자리를 지켜 주고, 그 안에 돌아오면 이어서 한다.
  */
 export class Lobby {
-  constructor(io, { countdownSec = START_COUNTDOWN_SEC } = {}) {
+  constructor(io, { countdownSec = START_COUNTDOWN_SEC, reconnectGraceSec = 60 } = {}) {
     this.io = io;
     this.countdownSec = countdownSec;
+    this.reconnectGraceSec = reconnectGraceSec;
     this.rooms = new Map(); // roomId → room
     this.roomOfUid = new Map(); // uid → roomId
     this.socketOfUid = new Map(); // uid → socket
@@ -29,7 +32,6 @@ export class Lobby {
 
     const previous = this.socketOfUid.get(uid);
     if (previous && previous.id !== socket.id) {
-      this.removeFromRoom(previous);
       previous.emit(EV.SESSION_REPLACED);
       previous.disconnect(true);
     }
@@ -47,7 +49,7 @@ export class Lobby {
         try {
           reply(handler(body));
         } catch (err) {
-          console.error(`[${event}] 처리 중 오류`, err);
+          console.error('명령 처리 중 오류', event, err);
           reply(fail(ERR.INVALID_PAYLOAD));
         }
       });
@@ -66,11 +68,81 @@ export class Lobby {
     });
 
     socket.on('disconnect', (reason) => {
-      console.log(`[접속 종료] uid=${uid} (${reason})`);
+      console.log('[접속 종료]', uid, reason);
       if (this.socketOfUid.get(uid) !== socket) return; // 새 세션으로 교체된 소켓
       this.socketOfUid.delete(uid);
-      this.removeFromRoom(socket);
+      this.handleDisconnect(socket);
     });
+
+    // 방에 남아 있던 uid면 다시 붙여 준다 (재접속, 또는 다른 탭에서 이어받기)
+    const room = this.roomOfUid.has(uid) ? this.rooms.get(this.roomOfUid.get(uid)) : null;
+    if (room) this.rejoin(socket, room);
+    else socket.emit(EV.LOBBY_ROOM, null);
+  }
+
+  /** 돌아온 플레이어를 방 채널에 다시 넣고, 경기 중이면 이어서 보게 한다 */
+  rejoin(socket, room) {
+    const uid = socket.data.uid;
+    const player = room.players.find((p) => p.uid === uid);
+    if (!player) return;
+
+    clearTimeout(player.graceTimer);
+    player.graceTimer = null;
+    player.connected = true;
+    socket.join(channelOf(room.id));
+
+    if (room.status === ROOM_STATUS.PLAYING && room.match) {
+      socket.emit(EV.GAME_RESUME, {
+        roomId: room.id,
+        mapId: room.mapId,
+        players: room.players.map((p) => ({ uid: p.uid, nickname: p.nickname, slot: p.slot })),
+      });
+      room.match.markNeedsFull(uid);
+      console.log('[재접속]', room.id, uid);
+    }
+    socket.emit(EV.LOBBY_ROOM, this.detail(room));
+    this.broadcastRoom(room);
+  }
+
+  /** 연결이 끊겼다: 경기 중이면 유예 시간 동안 기다리고, 아니면 바로 방에서 뺀다 */
+  handleDisconnect(socket) {
+    const room = this.roomOf(socket);
+    if (!room) return;
+    if (room.status !== ROOM_STATUS.PLAYING || !room.match) {
+      this.removeFromRoom(socket);
+      return;
+    }
+    const uid = socket.data.uid;
+    const player = room.players.find((p) => p.uid === uid);
+    if (!player) return;
+
+    player.connected = false;
+    player.graceTimer = setTimeout(() => this.dropPlayer(room, uid), this.reconnectGraceSec * 1000);
+    player.graceTimer.unref?.();
+    console.log('[연결 끊김]', room.id, uid, this.reconnectGraceSec + '초 기다립니다');
+    this.broadcastRoom(room);
+  }
+
+  /** 유예 시간이 끝났다: 돌아오지 않은 플레이어는 패배하고 방에서 빠진다 */
+  dropPlayer(room, uid) {
+    if (this.rooms.get(room.id) !== room) return;
+    const player = room.players.find((p) => p.uid === uid);
+    if (!player || player.connected) return;
+
+    clearTimeout(player.graceTimer);
+    console.log('[유예 종료]', room.id, uid);
+    this.roomOfUid.delete(uid);
+    room.players = room.players.filter((p) => p.uid !== uid);
+    room.match?.removePlayer(uid);
+
+    if (room.players.length === 0) {
+      room.match?.stop();
+      this.rooms.delete(room.id);
+    } else {
+      if (room.hostUid === uid) room.hostUid = room.players[0].uid;
+      this.broadcastRoom(room);
+    }
+    this.broadcastList();
   }
 
   create(socket, { name }) {
@@ -79,7 +151,7 @@ export class Lobby {
 
     const room = {
       id: randomUUID().slice(0, 8),
-      name: cleanText(name, ROOM_NAME_MAX) || `${nickname}의 방`,
+      name: cleanText(name, ROOM_NAME_MAX) || nickname + '의 방',
       hostUid: uid,
       status: ROOM_STATUS.WAITING,
       mapId: DEFAULT_MAP_ID,
@@ -90,7 +162,7 @@ export class Lobby {
     };
     this.rooms.set(room.id, room);
     this.addPlayer(room, socket);
-    console.log(`[방 생성] ${room.id} "${room.name}" uid=${uid}`);
+    console.log('[방 생성]', room.id, room.name, uid);
     return ok({ room: this.detail(room) });
   }
 
@@ -106,7 +178,7 @@ export class Lobby {
 
     this.removeFromRoom(socket);
     this.addPlayer(room, socket);
-    console.log(`[방 입장] ${room.id} uid=${uid}`);
+    console.log('[방 입장]', room.id, uid);
     return ok({ room: this.detail(room) });
   }
 
@@ -132,7 +204,14 @@ export class Lobby {
   addPlayer(room, socket) {
     const taken = new Set(room.players.map((p) => p.slot));
     const slot = Array.from({ length: MAX_PLAYERS }, (_, i) => i).find((s) => !taken.has(s));
-    room.players.push({ uid: socket.data.uid, nickname: socket.data.nickname, slot, ready: false });
+    room.players.push({
+      uid: socket.data.uid,
+      nickname: socket.data.nickname,
+      slot,
+      ready: false,
+      connected: true,
+      graceTimer: null,
+    });
     room.players.sort((a, b) => a.slot - b.slot);
     this.roomOfUid.set(socket.data.uid, room.id);
     socket.join(channelOf(room.id));
@@ -151,6 +230,8 @@ export class Lobby {
 
     const room = this.rooms.get(roomId);
     if (!room) return;
+    const leaving = room.players.find((p) => p.uid === uid);
+    clearTimeout(leaving?.graceTimer);
     room.players = room.players.filter((p) => p.uid !== uid);
     room.match?.removePlayer(uid);
     if (room.status === ROOM_STATUS.STARTING) this.cancelCountdown(room);
@@ -158,7 +239,7 @@ export class Lobby {
     if (room.players.length === 0) {
       room.match?.stop();
       this.rooms.delete(room.id);
-      console.log(`[방 삭제] ${room.id}`);
+      console.log('[방 삭제]', room.id);
     } else {
       if (room.hostUid === uid) room.hostUid = room.players[0].uid;
       this.broadcastRoom(room);
@@ -200,30 +281,45 @@ export class Lobby {
       mapId: room.mapId,
       players: payload.players,
       getSocket: (uid) => this.socketOfUid.get(uid),
-      onEnd: (result) => this.endGame(room, result),
+      onEnd: (result, record) => this.endGame(room, result, record),
     });
     room.match.start();
     this.broadcastRoom(room);
     this.broadcastList();
-    console.log(`[게임 시작] ${room.id} ${payload.players.map((p) => `${p.nickname}(${p.uid})`).join(' vs ')}`);
+    console.log('[게임 시작]', room.id, payload.players.map((p) => p.nickname).join(' vs '));
   }
 
-  /** 경기가 끝나면 방을 대기 상태로 되돌린다. 같은 방에서 다시 준비해 재대결할 수 있다. */
-  endGame(room, result) {
+  /**
+   * 경기가 끝나면 방을 대기 상태로 되돌린다. 같은 방에서 다시 준비해 재대결할 수 있다.
+   * 전적 저장은 기다리지 않는다 — 실패해도 경기 진행에는 영향이 없다.
+   */
+  endGame(room, result, record) {
     if (this.rooms.get(room.id) !== room) return;
     room.match = null;
     room.status = ROOM_STATUS.WAITING;
-    for (const player of room.players) player.ready = false;
+    for (const player of room.players) {
+      clearTimeout(player.graceTimer);
+      player.graceTimer = null;
+      player.ready = false;
+    }
     this.broadcastRoom(room);
     this.broadcastList();
+
     const winner = result.players.find((p) => p.slot === result.winner);
-    console.log(`[게임 종료] ${room.id} 승자=${winner?.nickname ?? '없음'} (${result.reason}, ${result.durationSec}초)`);
+    console.log('[게임 종료]', room.id, '승자=' + (winner?.nickname ?? '없음'), result.reason, result.durationSec + '초');
+    if (record) saveMatchResult(record).catch((err) => console.error('전적 저장 실패', err));
+
+    // 끊긴 채로 경기가 끝난 사람은 방에서 뺀다 (돌아올 자리를 남겨 둘 이유가 없다)
+    for (const player of [...room.players]) {
+      if (!player.connected) this.dropPlayer(room, player.uid);
+    }
   }
 
-  /** 서버를 닫을 때 진행 중인 카운트다운과 경기를 모두 멈춘다 */
+  /** 서버를 닫을 때 진행 중인 카운트다운, 재접속 유예, 경기를 모두 멈춘다 */
   dispose() {
     for (const room of this.rooms.values()) {
       clearTimeout(room.countdownTimer);
+      for (const player of room.players) clearTimeout(player.graceTimer);
       room.match?.stop();
     }
   }
@@ -246,7 +342,13 @@ export class Lobby {
       hostUid: room.hostUid,
       status: room.status,
       mapId: room.mapId,
-      players: room.players.map(({ uid, nickname, slot, ready }) => ({ uid, nickname, slot, ready })),
+      players: room.players.map(({ uid, nickname, slot, ready, connected }) => ({
+        uid,
+        nickname,
+        slot,
+        ready,
+        connected,
+      })),
     };
   }
 

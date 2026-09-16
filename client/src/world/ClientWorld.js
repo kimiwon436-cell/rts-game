@@ -1,16 +1,30 @@
+import { TICK_MS } from '@rune/shared/constants.js';
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { UNITS } from '@rune/shared/data/units.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
 import { GAME_EVENT } from '@rune/shared/protocol.js';
-import { decodeBuilding, decodeOwn, decodePlayer, decodePublicPlayer, decodeUnit } from '@rune/shared/snapshot.js';
+import {
+  applyBuildingDelta,
+  applyUnitDelta,
+  decodeBuilding,
+  decodeOwn,
+  decodePlayer,
+  decodePublicPlayer,
+  decodeUnit,
+} from '@rune/shared/snapshot.js';
 
 /** 유닛은 그리는 위치, 건물은 풋프린트 중심 (타일 좌표) */
 const centerOf = (entity) =>
   entity.size ? { x: entity.x + entity.size / 2, y: entity.y + entity.size / 2 } : { x: entity.drawX, y: entity.drawY };
 
-/** 그리는 위치가 서버 위치를 따라잡는 속도. 3-5에서 스냅샷 보간으로 바꾼다. */
-const SMOOTHING_PER_SEC = 18;
-const TELEPORT_DISTANCE = 3;
+/**
+ * 스냅샷 보간. 화면은 서버보다 INTERP_DELAY 틱(=100ms) 뒤를 보여 준다.
+ * 그만큼 늦게 보는 대신 다음 스냅샷이 이미 도착해 있어서, 두 위치 사이를 이어 그릴 수 있다.
+ * (지난 위치로 따라가는 방식과 달리 속도가 일정해 보이고, 한 틱을 놓쳐도 튀지 않는다)
+ */
+const INTERP_DELAY = 2;
+const MAX_SAMPLES = 6;
+const MAX_DRIFT = 8; // 이만큼 어긋나면 부드럽게 맞추지 않고 그냥 건너뛴다
 
 /**
  * 서버 스냅샷으로 만든 클라이언트 쪽 세계. 규칙은 판정하지 않고 보여주기와 선택에만 쓴다.
@@ -30,6 +44,11 @@ export class ClientWorld {
     /** 전투 효과 (투사체·타격·쓰러짐). 렌더러가 시간이 지난 것을 지운다 */
     this.effects = [];
     this.tick = -1;
+    /** 마지막으로 받은 서버 틱과, 지금 그리고 있는 시점(소수 틱) */
+    this.serverTick = -1;
+    this.renderTick = -1;
+    this.queues = new Map(); // buildingId → 생산 대기열
+    this.rallies = new Map(); // buildingId → 집결지
     this.occupied = new Uint8Array(map.tiles.length);
     this.occupancyDirty = true;
     /** @type {(tile: number) => void} */
@@ -42,69 +61,79 @@ export class ClientWorld {
     return this.me !== null;
   }
 
+  /**
+   * 델타 스냅샷을 적용한다. { t, full?, players?, addU?, updU?, addB?, updB?, del?, mines?, ev?, me?, own? }
+   * 안 바뀐 항목은 아예 오지 않으므로 지난 값을 그대로 쓴다.
+   * full이면 지난 상태를 버리고 통째로 다시 맞춘다 (첫 입장·재접속).
+   */
   applySnapshot(snap) {
+    if (snap.full) this.reset();
     this.tick = snap.t;
-    this.me = decodePlayer(snap.me);
-    for (const raw of snap.players) {
+    this.serverTick = snap.t;
+    if (snap.me) this.me = decodePlayer(snap.me);
+    for (const raw of snap.players ?? []) {
       const info = decodePublicPlayer(raw);
       this.ages.set(info.slot, info.age);
       this.publicPlayers.set(info.slot, info);
     }
     const removed = new Map(); // 이번 스냅샷에서 사라진 유닛·건물 (쓰러짐 효과 위치용)
 
-    const unitIds = new Set();
-    for (const raw of snap.units) {
+    for (const raw of snap.addU ?? []) {
       const data = decodeUnit(raw);
-      unitIds.add(data.id);
-      const unit = this.units.get(data.id);
-      if (unit) Object.assign(unit, data);
-      else this.units.set(data.id, { ...data, drawX: data.x, drawY: data.y, facing: 1 });
+      const unit = { ...data, drawX: data.x, drawY: data.y, facing: 1, samples: [] };
+      this.units.set(data.id, unit);
+      this.pushSample(unit, snap.t);
     }
-    for (const [id, unit] of this.units) {
-      if (unitIds.has(id)) continue;
-      removed.set(id, unit);
-      this.units.delete(id);
+    for (const delta of snap.updU ?? []) {
+      const unit = this.units.get(delta[0]);
+      if (!unit) continue;
+      if (applyUnitDelta(unit, delta)) this.pushSample(unit, snap.t);
     }
 
-    const buildingIds = new Set();
-    for (const raw of snap.buildings) {
+    for (const raw of snap.addB ?? []) {
       const data = decodeBuilding(raw);
-      buildingIds.add(data.id);
-      const building = this.buildings.get(data.id);
-      if (building) {
-        Object.assign(building, data);
-      } else {
-        this.buildings.set(data.id, { ...data, size: BUILDINGS[data.type].size });
-        this.occupancyDirty = true;
-      }
-    }
-    for (const [id, building] of this.buildings) {
-      if (buildingIds.has(id)) continue;
-      removed.set(id, building);
-      this.buildings.delete(id);
+      this.buildings.set(data.id, { ...data, size: BUILDINGS[data.type].size });
       this.occupancyDirty = true;
     }
-
-    // 내 건물의 생산 대기열과 집결지 (상대 건물은 늘 null)
-    const { queues, rallies } = decodeOwn(snap.own);
-    for (const building of this.buildings.values()) {
-      building.production = queues.get(building.id) ?? null;
-      building.rally = rallies.get(building.id) ?? null;
+    for (const delta of snap.updB ?? []) {
+      const building = this.buildings.get(delta[0]);
+      if (building) applyBuildingDelta(building, delta);
     }
 
-    const mineIds = new Set();
-    for (const [id, amount] of snap.mines) {
-      mineIds.add(id);
-      this.mineAmounts.set(id, amount);
-    }
-    for (const id of this.mineAmounts.keys()) {
-      if (!mineIds.has(id)) {
-        this.mineAmounts.delete(id);
+    for (const id of snap.del ?? []) {
+      const unit = this.units.get(id);
+      if (unit) {
+        removed.set(id, unit);
+        this.units.delete(id);
+        continue;
+      }
+      const building = this.buildings.get(id);
+      if (building) {
+        removed.set(id, building);
+        this.buildings.delete(id);
         this.occupancyDirty = true;
       }
     }
 
-    for (const event of snap.ev) {
+    for (const [id, amount] of snap.mines ?? []) {
+      if (amount > 0) this.mineAmounts.set(id, amount);
+      else if (this.mineAmounts.delete(id)) this.occupancyDirty = true;
+    }
+
+    // 내 건물의 생산 대기열과 집결지. 안 바뀌었으면 own이 오지 않으니 지난 값을 그대로 쓴다
+    if (snap.own) {
+      const { queues, rallies } = decodeOwn(snap.own);
+      this.queues = queues;
+      this.rallies = rallies;
+    }
+    if (snap.own || snap.addB?.length) {
+      for (const building of this.buildings.values()) {
+        building.production = this.queues.get(building.id) ?? null;
+        building.rally = this.rallies.get(building.id) ?? null;
+      }
+    }
+
+    for (const event of snap.ev ?? []) {
       if (event[0] === GAME_EVENT.TREE_FELLED) {
         this.tiles[event[1]] = TERRAIN.GRASS;
         this.onTreeFelled?.(event[1]);
@@ -112,6 +141,24 @@ export class ClientWorld {
       this.addCombatEffect(event, removed);
       this.onEvent?.(event);
     }
+  }
+
+  /** 전체 스냅샷을 받기 전에 지난 상태를 비운다 (재접속) */
+  reset() {
+    this.units.clear();
+    this.buildings.clear();
+    this.mineAmounts.clear();
+    this.queues.clear();
+    this.rallies.clear();
+    this.effects.length = 0;
+    this.renderTick = -1;
+    this.occupancyDirty = true;
+  }
+
+  /** 보간에 쓸 위치 표본. 움직인 틱에만 쌓인다 */
+  pushSample(unit, tick) {
+    unit.samples.push({ t: tick, x: unit.x, y: unit.y });
+    if (unit.samples.length > MAX_SAMPLES) unit.samples.shift();
   }
 
   addCombatEffect(event, removed) {
@@ -150,20 +197,41 @@ export class ClientWorld {
     }
   }
 
-  /** 그리는 위치를 서버 위치 쪽으로 부드럽게 옮긴다 */
+  /**
+   * 그리는 시점(renderTick)을 흘려보내고, 유닛마다 그 시점의 위치를 표본 사이에서 찾는다.
+   * 서버 틱보다 늦었으면 조금 빠르게, 너무 앞섰으면 조금 느리게 흘러서 지연을 일정하게 지킨다.
+   */
   updateDrawPositions(dt) {
-    const k = 1 - Math.exp(-SMOOTHING_PER_SEC * dt);
+    if (this.serverTick < 0) return;
+    const target = this.serverTick - INTERP_DELAY;
+    if (this.renderTick < 0 || Math.abs(target - this.renderTick) > MAX_DRIFT) {
+      this.renderTick = target; // 처음이거나 너무 벌어졌다 (재접속·긴 끊김)
+    } else {
+      const drift = Math.max(-0.2, Math.min(0.2, (target - this.renderTick) * 0.1));
+      this.renderTick += ((dt * 1000) / TICK_MS) * (1 + drift);
+    }
+
+    const now = this.renderTick;
     for (const unit of this.units.values()) {
-      const dx = unit.x - unit.drawX;
-      const dy = unit.y - unit.drawY;
-      if (Math.abs(dx) > 0.01) unit.facing = dx > 0 ? 1 : -1;
-      if (Math.abs(dx) > TELEPORT_DISTANCE || Math.abs(dy) > TELEPORT_DISTANCE) {
-        unit.drawX = unit.x;
-        unit.drawY = unit.y;
-      } else {
-        unit.drawX += dx * k;
-        unit.drawY += dy * k;
+      const samples = unit.samples;
+      while (samples.length > 2 && samples[1].t <= now) samples.shift();
+
+      let x = unit.x;
+      let y = unit.y;
+      if (samples.length === 1 || (samples.length > 1 && now <= samples[0].t)) {
+        x = samples[0].x;
+        y = samples[0].y;
+      } else if (samples.length > 1) {
+        const [a, b] = samples;
+        const k = Math.max(0, Math.min(1, (now - a.t) / (b.t - a.t)));
+        x = a.x + (b.x - a.x) * k;
+        y = a.y + (b.y - a.y) * k;
       }
+
+      const dx = x - unit.drawX;
+      if (Math.abs(dx) > 0.004) unit.facing = dx > 0 ? 1 : -1;
+      unit.drawX = x;
+      unit.drawY = y;
     }
   }
 

@@ -246,48 +246,54 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 
 명령 타입: `move` `attackMove` `attack` `stop` `gather` `returnCargo` `place` `construct` `cancelBuild` `train` `cancelTrain` `setRally` `ageUp` `cancelAgeUp` `trade` `toggleAbility` `surrender`
 
-### 스냅샷 포맷
+### 스냅샷 포맷 (`shared/src/snapshot.js`, `server/src/game/sync/snapshot.js`)
+
+틱마다 **바뀐 것만** 보낸다. 서버는 지난 틱에 보낸 인코딩을 들고 있다가 이번 틱 인코딩과 비교해 마스크를 만든다.
+(엔티티마다 dirty 비트를 다는 대신 인코딩을 비교한다 — 시스템 코드가 단순해지고 나가는 결과는 같다.)
 
 ```js
 {
-  t: 1234,                        // 서버 틱
-  ack: 57,                        // 처리한 내 마지막 명령 seq
-  me: [350, 220, 45, 18, 26],     // 금, 목재, 마나, 인구, 인구 상한 — 내 것만
-  add: [[id, type, owner, x, y, hp, state]],
-  upd: [[id, mask, ...바뀐 값]],    // mask: 위치 1 · 체력 2 · 상태 4 · 대상 8 · 진행도 16 · 운반 32
-  del: [id],
-  ev:  [[EV.ATTACK, attackerId, targetId], [EV.DEATH, id]]
+  t: 1234,                     // 서버 틱
+  full: true,                  // 전체 상태일 때만 (첫 입장·재접속)
+  players: [[slot, 시대, 왕관 몰락까지 남은 초, 패배 0|1]],
+  addU: [[id, 종류, 주인, x16, y16, hp, 상태, 운반종류, 운반량, 플래그]],
+  updU: [[id, 마스크, ...바뀐 값]],   // 마스크: 위치 1 · 체력 2 · 상태 4 · 운반 8 · 플래그 16
+  addB: [[id, 종류, 주인, x, y, hp, 진행도, 플래그]],
+  updB: [[id, 마스크, ...바뀐 값]],   // 마스크: 체력 1 · 진행도 2 · 플래그 4
+  del:  [id],                  // 사라진 유닛·건물
+  mines:[[금광id, 남은 양]],     // 0이면 다 캤다
+  ev:   [[GAME_EVENT.ATTACK, 공격자, 대상], [GAME_EVENT.UNIT_DIED, id]],
+  me:   [금, 목재, 마나, 인구, 상한, 시대, ...],  // 내 것만, 바뀐 틱에만
+  own:  { q: 생산 대기열, r: 집결지 }            // 내 건물만, 바뀐 틱에만
 }
 ```
 
+- **빈 항목은 키째로 뺀다.** 아무도 움직이지 않는 틱에는 `{ t }`만 나간다.
 - 좌표는 1/16타일 정수 (96타일 × 16 = 1536). 소수점 없이 짧다.
 - 공격 모션, 투사체, 사망 효과는 상태가 아니라 **이벤트**로 보낸다.
-- 상대의 자원과 생산 대기열은 보내지 않는다.
-- 입장·재접속 때는 `game:start`로 전체 상태를 다시 보낸다.
-- 대역폭이 커지면 `perMessageDeflate` 압축 → msgpack 파서 순서로 최적화한다.
+- 상대의 자원과 생산 대기열은 보내지 않는다. `me`·`own`은 플레이어별 개인화 단계에서만 얹는다.
+- 실측(2인, 유닛 8기 채취 중): 평균 **87B/틱**, 최대 476B, 같은 상황의 전체 스냅샷은 513B.
+- 더 커지면 `perMessageDeflate`(1KB 이상 압축) → msgpack 파서 순서로 최적화한다.
 
-### 클라이언트 보간
+### 클라이언트 보간 (`client/src/world/ClientWorld.js`)
 
-```js
-const INTERP_DELAY_TICKS = 2; // 100ms
+화면은 **서버보다 2틱(=100ms) 뒤**를 그린다. 그만큼 늦게 보는 대신, 그릴 시점의 앞뒤 스냅샷이 이미 도착해 있어
+두 위치를 잇기만 하면 된다. 위치를 쫓아가는 방식과 달리 속도가 일정해 보이고, 스냅샷 하나를 놓쳐도 튀지 않는다.
 
-function updateDrawPositions(world) {
-  const renderTick = estimateServerTick() - INTERP_DELAY_TICKS;
-  for (const e of world.entities.values()) {
-    const [a, b] = e.samplesAround(renderTick); // 위치 샘플 링 버퍼
-    const k = b.t === a.t ? 1 : Math.min(1, Math.max(0, (renderTick - a.t) / (b.t - a.t)));
-    e.drawX = a.x + (b.x - a.x) * k;
-    e.drawY = a.y + (b.y - a.y) * k;
-  }
-}
-```
+- 유닛마다 위치 표본 링 버퍼(최대 6개)를 둔다. 표본은 **위치가 바뀐 틱에만** 쌓인다(가만히 선 유닛은 공짜).
+- `renderTick`은 프레임 시간만큼 흐르고, 목표(`마지막 서버 틱 − 2`)와 어긋난 만큼 ±20% 안에서 빠르거나 느리게 간다.
+- 8틱 넘게 벌어지면(탭 비활성, 긴 끊김) 보정하지 않고 바로 목표로 건너뛴다.
+- 표본이 하나뿐이거나 그릴 시점이 마지막 표본보다 뒤면 마지막 위치를 유지한다 — 서버 위치를 앞질러 예측하지 않는다.
+  (예측은 되돌릴 때 유닛이 뒤로 미끄러져 보여서, 이 규모에서는 손해가 크다.)
 
-`estimateServerTick()`은 마지막 스냅샷의 틱 + 받은 뒤 흐른 시간 ÷ 50ms로 계산하고, 값이 튀면 조금씩 보정한다.
+### 재접속 (`server/src/net/lobby.js`)
 
-### 재접속
-
-- Firebase uid로 플레이어를 식별한다. 연결이 끊겨도 슬롯을 60초 유지한다 (승리 조건 3).
-- 같은 uid로 다시 연결하면 방에 재입장하고 `game:start`로 전체 상태를 받는다.
+- Firebase uid로 플레이어를 식별한다. 경기 중에 끊기면 슬롯을 **60초**(`RECONNECT_GRACE_SEC`) 지킨다.
+- 끊긴 사이에도 경기는 계속 돈다. 그 플레이어에게는 스냅샷을 보내지 않고, 명령은 오지 않으니 유닛은 하던 일을 계속한다.
+- 방에 남은 상대에게는 `connected: false`가 브로드캐스트되어 "상대의 연결이 끊겼습니다"가 뜬다.
+- 같은 uid로 다시 붙으면 `game:resume` → 다음 틱에 `full: true` 스냅샷을 받아 처음부터 다시 맞춘다.
+- 유예 시간이 지나면 패배(`VICTORY_REASON.LEFT`) 처리하고 방에서 뺀다. 상대가 이긴다.
+- 대기실에서 끊긴 경우는 유예 없이 바로 방에서 나간다.
 
 ---
 
@@ -381,10 +387,12 @@ io.use(async (socket, next) => {
 
 | 경로 | 필드 | 쓰기 권한 |
 |---|---|---|
-| `users/{uid}` | nickname, createdAt, rating, wins, losses | nickname만 본인, 나머지는 서버 |
-| `matches/{matchId}` | players[{uid, nickname, oath, result}], winner, victoryType, durationSec, startedAt, endedAt, gameVersion | 서버만 |
+| `users/{uid}` | nickname, createdAt, matches, wins, losses, lastPlayedAt | nickname만 본인, 전적은 서버 |
+| `matches/{matchId}` | matchId, mapId, players[{slot, uid, nickname, defeated}], uids[], winnerSlot, reason, durationSec, startedAt, endedAt | 서버만 |
 
-쓰기는 경기가 끝날 때 배치 한 번. 틱마다 쓰지 않는다.
+쓰기는 경기가 끝날 때 배치 한 번(`server/src/persistence/matches.js`), 경기당 1 + 인원 수. 틱마다 쓰지 않는다.
+`matchId`는 `방id-시작시각`이라 같은 경기를 두 번 써도 덮어쓰기라 안전하다. `uids` 배열은 "내 경기만 보기"(array-contains) 색인용이다.
+Firebase가 설정되지 않은 개발 모드에서는 저장을 건너뛴다(게임은 그대로 돌아간다).
 
 ### 보안 규칙 초안 (`firestore.rules`)
 
@@ -435,6 +443,7 @@ service cloud.firestore {
 | `server/.env` | `PORT` | `3000` (Render에서는 자동 주입) |
 | `server/.env` | `CLIENT_ORIGINS` | `http://localhost:5173,https://<사이트>.netlify.app` |
 | `server/.env` | `FIREBASE_SERVICE_ACCOUNT` | 서비스 계정 JSON을 Base64로 인코딩한 값 |
+| `server/.env` | `RECONNECT_GRACE_SEC` | `60` — 경기 중 끊긴 자리를 지켜 주는 시간 |
 
 ### 파이프라인
 
@@ -477,7 +486,7 @@ npm run dev
 
 ## 11. 3단계 코드 로드맵
 
-서버 권위 구조라 클라이언트는 처음부터 서버 상태만 그린다. 3-2부터는 서버가 매 틱 **전체 상태**를 보내는 단순한 방식으로 시작하고, 3-5에서 델타·보간·재접속으로 바꾼다.
+서버 권위 구조라 클라이언트는 처음부터 서버 상태만 그린다. 3-2~3-4는 매 틱 **전체 상태**를 보내는 단순한 방식으로 굴렸고, 3-5에서 델타·보간·재접속으로 바꿨다. **3단계 전체 완료.**
 
 | 단계 | 만들 것 | 완료 기준 |
 |---|---|---|
@@ -485,4 +494,4 @@ npm run dev
 | 3-2 자원·건설 | shared 데이터 파일, 서버 틱 루프, 농노 채집·반납, 건물 배치 검증·건설, 오벨리스크 마나, 시장, 시대 발전, HUD·명령 카드, 선택과 우클릭 명령, A* 핵심(NavGrid·A*·스무딩 — 채집에 필요해 앞당김) | 농노가 금·목재를 모으고 건물이 올라간다 |
 | 3-3 생산·이동 | 생산 대기열·집결지, 인구 제한, 길찾기 요청 큐·틱당 예산, 그룹 이동(목표 분산), 유닛끼리 밀어내기 | 병력을 뽑아 무리 지어 장애물을 돌아 이동시킨다 |
 | 3-4 전투 | 대상 탐색, 피해 공식·배율표, 공격 이동, 감시탑, 방패벽, 사망 처리, 정복 승리 | 상성대로 전투 결과가 나오고 경기가 끝난다 |
-| 3-5 동기화 | 델타 스냅샷·dirty 마스크, 보간 버퍼, 공격·사망 이벤트, 재접속, 경기 결과 Firestore 저장 | 두 브라우저에서 같은 전투가 부드럽게 보인다 |
+| 3-5 동기화 ✅ | 델타 스냅샷·필드 마스크, 보간 버퍼, 재접속 유예 60초, 경기 결과 Firestore 저장 | 두 브라우저에서 같은 전투가 부드럽게 보이고, 끊겼다 돌아와도 이어서 한다 |

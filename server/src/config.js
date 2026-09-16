@@ -22,4 +22,6 @@ export const config = Object.freeze({
   firebaseServiceAccount,
   /** 'firebase': ID 토큰 검증, 'dev': 게스트 토큰 허용 (로컬 개발 전용) */
   authMode: firebaseServiceAccount ? 'firebase' : 'dev',
+  /** 경기 중 연결이 끊긴 플레이어의 자리를 지켜 주는 시간(초) */
+  reconnectGraceSec: Number(process.env.RECONNECT_GRACE_SEC) || 60,
 });
