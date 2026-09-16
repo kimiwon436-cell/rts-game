@@ -56,6 +56,10 @@ export class ClientWorld {
     this.occupancyDirty = true;
     /** @type {(tile: number) => void} */
     this.onTreeFelled = null;
+    /** 지형을 통째로 다시 그려야 할 때 (전체 스냅샷·되감기) */
+    this.onTerrainReset = null;
+    /** true면 효과와 이벤트 알림 없이 상태만 적용한다 (리플레이 탐색) */
+    this.quiet = false;
     /** @type {(event: Array) => void} */
     this.onEvent = null;
   }
@@ -70,7 +74,11 @@ export class ClientWorld {
    * full이면 지난 상태를 버리고 통째로 다시 맞춘다 (첫 입장·재접속).
    */
   applySnapshot(snap) {
-    if (snap.full) this.reset();
+    if (snap.full) {
+      this.reset();
+      for (const tile of snap.felled ?? []) this.tiles[tile] = TERRAIN.GRASS;
+      if (snap.felled?.length) this.onTerrainReset?.();
+    }
     this.tick = snap.t;
     this.serverTick = snap.t;
     if (snap.me) this.me = decodePlayer(snap.me);
@@ -141,18 +149,24 @@ export class ClientWorld {
     for (const event of snap.ev ?? []) {
       if (event[0] === GAME_EVENT.TREE_FELLED) {
         this.tiles[event[1]] = TERRAIN.GRASS;
-        this.onTreeFelled?.(event[1]);
+        if (!this.quiet) this.onTreeFelled?.(event[1]);
       }
+      if (this.quiet) continue; // 리플레이 빨리 감기: 상태만 따라가고 효과·알림은 건너뛴다
       this.addCombatEffect(event, removed);
       this.onEvent?.(event);
     }
   }
 
-  /** 전체 스냅샷을 받기 전에 지난 상태를 비운다 (재접속) */
+  /** 전체 스냅샷을 받기 전에 지난 상태를 비운다 (재접속·리플레이 되감기) */
   reset() {
     this.units.clear();
     this.buildings.clear();
     this.mineAmounts.clear();
+    this.tiles.set(this.map.tiles); // 베였던 나무를 되살린다
+    this.publicPlayers.clear();
+    this.ages.clear();
+    this.serverTick = -1;
+    this.tick = -1;
     this.queues.clear();
     this.rallies.clear();
     this.cooldowns.clear();
@@ -243,7 +257,11 @@ export class ClientWorld {
       this.renderTick += ((dt * 1000) / TICK_MS) * (1 + drift);
     }
 
-    const now = this.renderTick;
+    this.interpolateAt(this.renderTick);
+  }
+
+  /** 주어진 시점(소수 틱)의 위치로 유닛을 옮긴다. 리플레이는 자기 시계로 이 값을 준다. */
+  interpolateAt(now) {
     for (const unit of this.units.values()) {
       const samples = unit.samples;
       while (samples.length > 2 && samples[1].t <= now) samples.shift();

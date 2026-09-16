@@ -376,3 +376,86 @@ button, input { font: inherit; color: inherit; }
   .command-card { left: 222px; right: 12px; transform: none; grid-template-columns: minmax(0, 1fr); }
   .cc-grid { grid-template-columns: repeat(auto-fill, 66px); }
 }
+
+/* ---------- 리플레이 ---------- */
+.btn-ghost { justify-self: center; background: transparent; color: var(--text-soft); }
+.btn-ghost:hover { color: var(--text); }
+.lobby-side { display: grid; gap: 20px; align-content: start; }
+.lobby-side .panel .btn { margin-top: 10px; }
+
+.replay-badge {
+  padding: 0 8px;
+  border: 1px solid #5e4d1d;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gold);
+}
+.hud.is-replay .replay-bar,
+.hud.is-replay .replay-info { pointer-events: auto; }
+.replay-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  width: min(760px, calc(100vw - 460px));
+  display: grid;
+  grid-template-columns: auto auto auto auto minmax(80px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(12, 14, 19, 0.94);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+}
+.rp-btn,
+.rp-speed {
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--panel-2);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rp-btn:hover,
+.rp-speed:hover { border-color: var(--text-faint); }
+.rp-play { min-width: 84px; background: var(--gold); border-color: var(--gold); color: var(--gold-ink); }
+.rp-play:hover { background: var(--gold-hover); }
+.rp-seek { width: 100%; accent-color: var(--gold); }
+.rp-time { font-size: 13px; color: var(--text-soft); font-variant-numeric: tabular-nums; }
+.rp-speeds { display: flex; gap: 3px; }
+.rp-speed { min-width: 40px; padding: 4px 6px; font-family: var(--f-mono); font-weight: 500; }
+.rp-speed[aria-pressed="true"] { border-color: var(--gold); color: var(--gold); }
+
+.replay-info {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+  padding: 10px 14px;
+  background: rgba(12, 14, 19, 0.92);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.replay-info strong { font-family: var(--f-display); font-size: 15px; }
+.replay-info-sub { color: var(--text-soft); }
+
+@media (max-width: 1100px) {
+  .replay-bar {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    transform: none;
+    width: auto;
+    grid-template-columns: repeat(4, auto) minmax(60px, 1fr) auto;
+  }
+  .rp-speeds { grid-column: 1 / -1; justify-content: center; }
+  .hud.is-replay .hud-minimap { bottom: 112px; }
+  .replay-info { bottom: 112px; }
+}

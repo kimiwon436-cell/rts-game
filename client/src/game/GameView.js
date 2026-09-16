@@ -18,6 +18,7 @@ import { Camera } from '../render/Camera.js';
 import { Renderer } from '../render/Renderer.js';
 import { Minimap } from '../render/minimap.js';
 import { Input } from '../input/Input.js';
+import { downloadReplay } from './replayFile.js';
 
 const PAN_SPEED = 1100; // 화면 픽셀/초
 const DRAG_THRESHOLD = 5;
@@ -41,7 +42,7 @@ function endReason(reason, won) {
  * 게임 화면: 스냅샷을 받아 그리고, 선택·우클릭 명령·건물 배치를 서버에 보낸다.
  * 규칙 판정은 서버가 한다. 클라이언트의 배치 판정은 미리보기용이다.
  */
-export function createGameView({ canvas, socket, mapId, players, me, onLeave, onReturnToRoom }) {
+export function createGameView({ canvas, socket, mapId, players, me, recorder, onLeave, onReturnToRoom }) {
   const map = loadMap(mapId);
   const mySlot = players.find((p) => p.uid === me.uid)?.slot ?? 0;
 
@@ -70,6 +71,7 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
   // ---------- 서버 ----------
 
   const onSnapshot = (snap) => {
+    recorder?.add(snap);
     world.applySnapshot(snap);
     for (const id of selection) {
       const alive = typeof id === 'string' ? world.mineAmounts.has(id) : world.units.has(id) || world.buildings.has(id);
@@ -103,6 +105,10 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
 
   world.onTreeFelled = (tile) => {
     renderer.terrain.invalidateTile(tile % map.width, Math.floor(tile / map.width));
+    minimap.markTerrainDirty();
+  };
+  world.onTerrainReset = () => {
+    renderer.terrain.invalidateAll();
     minimap.markTerrainDirty();
   };
   world.onEvent = (event) => {
@@ -561,6 +567,20 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
   const resultPanel = h('div', { class: 'result-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': '경기 결과' });
   const resultOverlay = h('div', { class: 'result-overlay', hidden: true }, resultPanel);
 
+  async function saveReplay(event) {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const bytes = await downloadReplay(recorder.build());
+      toast(`리플레이를 저장했습니다 (${Math.max(1, Math.round(bytes / 1024))} KB). 로비에서 열어 볼 수 있습니다.`);
+    } catch (err) {
+      console.error('[리플레이 저장 실패]', err);
+      toast('리플레이를 저장하지 못했습니다.', { error: true });
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   function showResult(result) {
     ended = true;
     cancelPlacing();
@@ -569,6 +589,7 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
     surrenderConfirm.hidden = true;
     surrenderButton.disabled = true;
 
+    recorder?.finish(result);
     const won = result.winner === mySlot;
     const minutes = Math.floor(result.durationSec / 60);
     const seconds = String(result.durationSec % 60).padStart(2, '0');
@@ -580,6 +601,7 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
         'div',
         { class: 'result-actions' },
         h('button', { class: 'btn', type: 'button', onClick: onLeave }, '로비로'),
+        recorder ? h('button', { class: 'btn', type: 'button', onClick: saveReplay }, '리플레이 저장') : null,
         h('button', { class: 'btn btn-primary', type: 'button', onClick: () => onReturnToRoom?.() }, '대기실로 (재대결)'),
       ),
     );

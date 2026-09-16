@@ -298,6 +298,23 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 
 ---
 
+### 리플레이 (`client/src/game/replayFile.js`, `ReplayPlayer.js`, `ReplayView.js`)
+
+서버에 저장하지 않고 **클라이언트가 받은 스냅샷을 그대로 녹화**한다. 경기가 끝나면 결과 화면에서 `.rcr` 파일로 내려받고,
+첫 화면이나 로비에서 열어 본다.
+
+- **시뮬레이션을 다시 돌리지 않는다.** 받았던 델타를 다시 적용할 뿐이라 규칙·밸런스가 바뀌어도 옛 리플레이가 깨지지 않는다.
+  대신 녹화한 사람의 시점이다 (내 자원·생산 대기열만 있다).
+- 파일: `{ format: 'rune-replay', version, mapId, mySlot, players[{nickname, slot}], result, snapshots[] }`를
+  gzip(`CompressionStream`)으로 줄인다. uid는 담지 않는다. 실측 6초 경기 기준 약 1/8.
+- **되감기**는 월드를 비우고(`reset`) 처음부터 다시 적용한다. 스냅샷이 작아 20분 경기도 수십 ms다.
+  탐색하는 동안은 `world.quiet`로 효과·알림을 만들지 않고, 끝나면 지형 캐시를 통째로 다시 그린다.
+- **재생 시계**는 서버 시계 대신 `ReplayPlayer.tick`(배속 0.5~8×)이고, `interpolateAt(tick − 1)`로 두 스냅샷 사이를 잇는다.
+- 재접속해도 같은 경기의 녹화는 이어서 쌓는다. 중간에 끼는 `full` 스냅샷이 상태를 다시 맞춘다.
+- `full` 스냅샷에는 이미 베인 나무(`felled`)도 싣는다 — 재접속 화면과 리플레이 되감기에서 나무가 되살아나지 않게.
+
+---
+
 ## 5-2. 맹세와 궁극 유닛 (`server/src/game/systems/abilities.js`)
 
 기획서 4장을 그대로 구현한 시스템. 규칙 데이터는 `shared/src/data/oaths.js`·`abilities.js`에 있다.

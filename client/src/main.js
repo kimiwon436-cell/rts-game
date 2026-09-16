@@ -11,6 +11,8 @@ import { createTitleScreen } from './ui/titleScreen.js';
 import { createLobbyScreen } from './ui/lobbyScreen.js';
 import { createRoomScreen } from './ui/roomScreen.js';
 import { createGameView } from './game/GameView.js';
+import { createReplayView } from './game/ReplayView.js';
+import { createRecorder, decodeReplay, pickReplayFile } from './game/replayFile.js';
 
 const NICKNAME_KEY = 'rune.nickname';
 const app = document.getElementById('app');
@@ -24,7 +26,8 @@ const state = {
   ping: null,
   rooms: [],
   room: null, // 내가 들어간 방
-  view: null, // 'title' | 'lobby' | 'room' | 'game'
+  recorder: null, // 지금 경기의 리플레이 녹화 (재접속해도 이어서 쌓는다)
+  view: null, // 'title' | 'lobby' | 'room' | 'game' | 'replay'
   screen: null,
 };
 if (import.meta.env.DEV) window.__rune = state;
@@ -50,6 +53,7 @@ function showTitle(errorText = '') {
       ? 'Firebase 익명 로그인으로 접속합니다.'
       : '개발 모드 · Firebase 설정이 없어 게스트로 접속합니다.',
     onSubmit: enter,
+    onOpenReplay: openReplay,
   });
   show('title', screen);
   if (errorText) screen.showError(errorText);
@@ -91,10 +95,10 @@ function openSocket() {
   socket.on(EV.GAME_COUNTDOWN, ({ seconds }) => {
     if (state.view === 'room') state.screen.setCountdown(seconds);
   });
-  socket.on(EV.GAME_START, startGame);
+  socket.on(EV.GAME_START, (payload) => startGame(payload));
   socket.on(EV.GAME_RESUME, (payload) => {
     toast('경기에 다시 들어왔습니다.');
-    startGame(payload);
+    startGame(payload, { resume: true });
   });
   socket.on(EV.SESSION_REPLACED, () => {
     showTitle('다른 탭에서 같은 계정으로 접속해 이 탭의 연결이 끊어졌습니다.');
@@ -157,7 +161,7 @@ function closeSocket() {
 // ---------- 로비와 대기실 ----------
 
 function showLobby() {
-  const screen = createLobbyScreen({ me: me(), onCreate: createRoom, onJoin: joinRoom });
+  const screen = createLobbyScreen({ me: me(), onCreate: createRoom, onJoin: joinRoom, onOpenReplay: openReplay });
   show('lobby', screen);
   screen.setOnline(Boolean(state.socket?.connected));
   screen.setRooms(state.rooms);
@@ -209,8 +213,14 @@ function onRoom(room) {
 
 // ---------- 게임 ----------
 
-function startGame({ roomId, mapId, players }) {
-  console.log(`[게임 시작] 방 ${roomId} · 맵 ${mapId}`);
+function startGame({ roomId, mapId, players }, { resume = false } = {}) {
+  console.log(`[게임 ${resume ? '재접속' : '시작'}] 방 ${roomId} · 맵 ${mapId}`);
+  // 재접속이면 같은 경기의 녹화를 이어서 쌓는다 (중간의 전체 스냅샷이 상태를 다시 맞춘다)
+  if (!resume || state.recorder?.roomId !== roomId) {
+    const mySlot = players.find((p) => p.uid === state.session.uid)?.slot ?? 0;
+    state.recorder = createRecorder({ mapId, players, mySlot });
+    state.recorder.roomId = roomId;
+  }
   show(
     'game',
     createGameView({
@@ -219,6 +229,7 @@ function startGame({ roomId, mapId, players }) {
       mapId,
       players,
       me: me(),
+      recorder: state.recorder,
       roomName: state.room?.name ?? '',
       onLeave: leaveRoom,
       onReturnToRoom: returnToRoom,
@@ -234,6 +245,30 @@ function returnToRoom() {
   }
   show('room', createRoomScreen({ me: me(), onReady: setReady, onLeave: leaveRoom }));
   state.screen.update(state.room);
+}
+
+// ---------- 리플레이 ----------
+
+async function openReplay() {
+  const file = await pickReplayFile();
+  if (!file) return;
+  let replay;
+  try {
+    replay = await decodeReplay(file);
+  } catch (err) {
+    toast(err.message, { error: true });
+    return;
+  }
+  // 로비에서 열었으면 로비로, 로그인 전 첫 화면에서 열었으면 첫 화면으로 돌아간다
+  const fromLobby = Boolean(state.socket);
+  show(
+    'replay',
+    createReplayView({
+      canvas,
+      replay,
+      onExit: () => (fromLobby ? showLobby() : showTitle()),
+    }),
+  );
 }
 
 showTitle();

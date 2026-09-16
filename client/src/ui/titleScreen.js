@@ -1,7 +1,7 @@
 import { NICKNAME_MAX } from '@rune/shared/constants.js';
 import { h } from './dom.js';
 
-export function createTitleScreen({ nickname, modeLabel, onSubmit }) {
+export function createTitleScreen({ nickname, modeLabel, onSubmit, onOpenReplay }) {
   const input = h('input', {
     class: 'input',
     id: 'nickname',
@@ -61,6 +61,11 @@ export function createTitleScreen({ nickname, modeLabel, onSubmit }) {
       ),
       form,
       h('p', { class: 'note' }, modeLabel),
+      h(
+        'button',
+        { class: 'btn btn-sm btn-ghost', type: 'button', onClick: () => onOpenReplay?.() },
+        '리플레이 파일 열기',
+      ),
     ),
   );
 
