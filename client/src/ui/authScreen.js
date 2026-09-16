@@ -90,7 +90,16 @@ export function nicknameField({ onCheckNickname, value = '' }) {
  * 첫 화면: 로그인 / 회원가입.
  * onSignIn·onSignUp이 예외를 던지면 문장으로 바꿔 보여 준다. 성공하면 main.js가 화면을 넘긴다.
  */
-export function createAuthScreen({ mode, tab = 'signin', onSignIn, onSignUp, onResetPassword, onCheckNickname, onOpenReplay }) {
+export function createAuthScreen({
+  mode,
+  tab = 'signin',
+  onSignIn,
+  onSignUp,
+  onResetPassword,
+  onCheckNickname,
+  onOpenReplay,
+  onOpenTutorial,
+}) {
   const error = h('p', { class: 'form-error', role: 'alert' });
   const notice = h('p', { class: 'form-notice', role: 'status' });
   const setMessage = (err = '', note = '') => {
@@ -204,7 +213,12 @@ export function createAuthScreen({ mode, tab = 'signin', onSignIn, onSignUp, onR
         notice,
       ),
       h('p', { class: 'note' }, modeNote),
-      h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onClick: () => onOpenReplay?.() }, '리플레이 파일 열기'),
+      h(
+        'div',
+        { class: 'auth-extras' },
+        h('button', { class: 'btn btn-sm', type: 'button', onClick: () => onOpenTutorial?.() }, '가입 없이 튜토리얼 해 보기'),
+        h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onClick: () => onOpenReplay?.() }, '리플레이 파일 열기'),
+      ),
     ),
   );
 

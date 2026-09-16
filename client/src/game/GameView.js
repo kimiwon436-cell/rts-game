@@ -57,6 +57,7 @@ export function createGameView({
   ranked = false,
   chatMessages = [],
   onSendChat = async () => {},
+  tutorial = false, // 튜토리얼: 항복·채팅 없이, 안내 패널이 나가기 버튼을 맡는다
   onLeave,
   onReturnToRoom,
 }) {
@@ -630,7 +631,7 @@ export function createGameView({
 
   input.handlers.key = (event) => {
     // Enter: 채팅 입력 (경기가 끝난 뒤에도 인사할 수 있게 ended보다 먼저)
-    if (event.code === 'Enter' || event.code === 'NumpadEnter' || event.key === 'Enter') {
+    if (!tutorial && (event.code === 'Enter' || event.code === 'NumpadEnter' || event.key === 'Enter')) {
       event.preventDefault();
       chat.open();
       return;
@@ -720,7 +721,7 @@ export function createGameView({
         'div',
         { class: 'touch-tools', role: 'group', 'aria-label': '빠른 선택' },
         cancelModeButton,
-        h('button', { class: 'touch-btn', type: 'button', onClick: () => chat.open() }, '채팅'),
+        tutorial ? null : h('button', { class: 'touch-btn', type: 'button', onClick: () => chat.open() }, '채팅'),
         h('button', { class: 'touch-btn', type: 'button', onClick: () => selectArmy() }, '병력 전체'),
         h('button', { class: 'touch-btn', type: 'button', onClick: () => selectIdleWorkers() }, '쉬는 농노'),
       )
@@ -766,7 +767,8 @@ export function createGameView({
     const won = result.winnerTeam === myTeam;
     const minutes = Math.floor(result.durationSec / 60);
     const seconds = String(result.durationSec % 60).padStart(2, '0');
-    resultPanel.replaceChildren(
+    // replaceChildren은 null을 "null" 글자로 넣으므로, 조건부 항목이 섞인 목록은 걸러서 넘긴다
+    const rows = [
       h('p', { class: won ? 'result-kicker is-win' : 'result-kicker' }, won ? '승리' : '패배'),
       h('h2', { class: 'result-title' }, won ? '왕관을 지켰습니다' : '왕관을 잃었습니다'),
       h('p', { class: 'result-reason' }, `${endReason(result.reason, won, teamGame)} · 경기 시간 ${minutes}분 ${seconds}초`),
@@ -796,7 +798,8 @@ export function createGameView({
         recorder ? h('button', { class: 'btn', type: 'button', onClick: saveReplay }, '리플레이 저장') : null,
         ranked ? null : h('button', { class: 'btn btn-primary', type: 'button', onClick: () => onReturnToRoom?.() }, '대기실로 (재대결)'),
       ),
-    );
+    ];
+    resultPanel.replaceChildren(...rows.filter(Boolean));
     resultOverlay.hidden = false;
   }
 
@@ -808,11 +811,11 @@ export function createGameView({
       { class: 'hud-top' },
       resources,
       versus,
-      h('div', { class: 'hud-right' }, ping, surrenderButton, surrenderConfirm),
+      h('div', { class: 'hud-right' }, tutorial ? null : ping, tutorial ? null : surrenderButton, surrenderConfirm),
     ),
     h('div', { class: 'hud-banners' }, crownBanner, netBanner, banner),
     h('div', { class: 'hud-minimap' }, minimap.canvas),
-    h('div', { class: 'hud-chat' }, chat.el),
+    tutorial ? null : h('div', { class: 'hud-chat' }, chat.el),
     touchTools,
     touchMode ? h('p', { class: 'rotate-hint' }, '가로로 돌리면 더 넓게 볼 수 있습니다') : null,
     commandCard.el,
@@ -951,6 +954,10 @@ export function createGameView({
 
   return {
     el,
+    // 튜토리얼이 진행을 확인할 때 읽는다
+    camera,
+    selection,
+    world,
     updateRoom,
     setRankedResult,
     addChatMessage: (message) => chat.add(message),

@@ -1,7 +1,7 @@
 import { ROOM_NAME_MAX } from '@rune/shared/constants.js';
 import { ROOM_STATUS } from '@rune/shared/protocol.js';
 import { GAME_MODES, MAP_LIST } from '@rune/shared/map/maps/index.js';
-import { h } from './dom.js';
+import { h, readStorage } from './dom.js';
 import { createLeaderboardDialog, createRankedPanel } from './rankedPanel.js';
 
 const STATUS_LABEL = {
@@ -16,6 +16,7 @@ export function createLobbyScreen({
   onCreate,
   onJoin,
   onOpenReplay,
+  onOpenTutorial,
   onSignOut,
   onRankedJoin,
   onRankedLeave,
@@ -78,11 +79,18 @@ export function createLobbyScreen({
     h('p', { class: 'note' }, '방을 만들면 다른 플레이어가 목록에서 입장할 수 있습니다.'),
   );
 
+  const tutorialDone = readStorage('rune.tutorial.done') === '1';
   const replayPanel = h(
     'section',
-    { class: 'panel', 'aria-labelledby': 'replay-title' },
-    h('h2', { class: 'panel-title', id: 'replay-title' }, '리플레이'),
-    h('p', { class: 'note' }, '경기가 끝나면 결과 화면에서 저장할 수 있습니다 (.rcr 파일).'),
+    { class: 'panel', 'aria-labelledby': 'practice-title' },
+    h('h2', { class: 'panel-title', id: 'practice-title' }, '연습·리플레이'),
+    h(
+      'p',
+      { class: 'note' },
+      tutorialDone ? '튜토리얼을 마쳤습니다. 언제든 다시 해 볼 수 있습니다.' : '처음이라면 튜토리얼로 조작부터 익혀 보세요 (5분).',
+    ),
+    h('button', { class: tutorialDone ? 'btn' : 'btn btn-primary', type: 'button', onClick: () => onOpenTutorial?.() }, '튜토리얼'),
+    h('p', { class: 'note' }, '경기가 끝나면 결과 화면에서 리플레이를 저장할 수 있습니다 (.rcr 파일).'),
     h('button', { class: 'btn', type: 'button', onClick: () => onOpenReplay?.() }, '리플레이 파일 열기'),
   );
 

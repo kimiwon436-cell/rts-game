@@ -74,7 +74,7 @@ function onSession(session) {
     state.session = null;
     state.profile = null;
     closeSocket();
-    if (state.view !== 'replay') showAuth();
+    if (state.view !== 'replay' && state.view !== 'tutorial') showAuth();
     return;
   }
   if (state.session?.uid === session.uid && state.socket) return; // 같은 계정의 토큰 갱신
@@ -98,6 +98,7 @@ function showAuth(errorText = '') {
     onResetPassword: (email) => state.auth.sendPasswordReset(email),
     onCheckNickname: checkNickname,
     onOpenReplay: openReplay,
+    onOpenTutorial: openTutorial,
   });
   show('auth', screen);
   if (errorText) screen.showError(errorText);
@@ -276,6 +277,7 @@ function showLobby() {
     onCreate: createRoom,
     onJoin: joinRoom,
     onOpenReplay: openReplay,
+    onOpenTutorial: openTutorial,
     onSignOut: signOut,
     onRankedJoin: async (mode) => {
       const res = await request(state.socket, EV.RANKED_JOIN, { mode });
@@ -402,6 +404,25 @@ function returnToRoom() {
   }
   show('room', roomScreen());
   state.screen.update(state.room);
+}
+
+// ---------- 튜토리얼 ----------
+
+/** 로그인하지 않아도 할 수 있다. 끝나면 온 곳(로비 또는 로그인 화면)으로 돌아간다 */
+async function openTutorial() {
+  const { createTutorialView } = await import('./tutorial/TutorialView.js'); // 시뮬레이션 코드는 이때만 받는다
+  show(
+    'tutorial',
+    createTutorialView({
+      canvas,
+      onExit: (options) => {
+        if (options?.restart) openTutorial();
+        else if (!state.session) showAuth();
+        else if (state.profile && state.socket) showLobby();
+        else connect();
+      },
+    }),
+  );
 }
 
 // ---------- 리플레이 ----------

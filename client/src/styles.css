@@ -725,3 +725,39 @@ button, .rp-seek { touch-action: manipulation; }
 .chat-overlay.is-open .chat-form { display: flex; }
 @media (max-height: 520px) { .hud-chat { bottom: 130px; width: min(360px, 46vw); } .chat-overlay .chat-list { max-height: 110px; } }
 @media (max-width: 600px) { .hud-chat { top: 176px; bottom: auto; } .chat-overlay .chat-list { max-height: 120px; } }
+
+/* ---------- 튜토리얼 ---------- */
+.auth-extras { display: grid; justify-items: center; gap: 8px; }
+.tutorial-panel {
+  position: fixed;
+  z-index: 20;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, calc(100vw - 24px));
+  display: grid;
+  gap: 6px;
+  padding: 12px 16px;
+  background: rgba(20, 24, 32, 0.96);
+  border: 1px solid #5e4d1d;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  transition: border-color 0.2s, background 0.2s;
+}
+.tutorial-panel.is-done { border-color: var(--vert); background: rgba(24, 40, 30, 0.96); }
+.tutorial-head { display: flex; align-items: center; gap: 10px; }
+.tutorial-counter { font-size: 12px; color: var(--gold); }
+.tutorial-dots { display: flex; gap: 4px; }
+.tutorial-dots i { width: 14px; height: 4px; border-radius: 2px; background: var(--line-strong); }
+.tutorial-dots i.is-current { background: var(--gold); }
+.tutorial-dots i.is-done { background: var(--vert); }
+.tutorial-title { margin: 0; font-family: var(--f-display); font-size: 18px; }
+.tutorial-panel.is-done .tutorial-title::after { content: ' ✓'; color: var(--vert); }
+.tutorial-text { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text); }
+.tutorial-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 2px; }
+@media (max-height: 520px) {
+  .tutorial-panel { top: 40px; padding: 8px 12px; gap: 3px; }
+  .tutorial-title { font-size: 15px; }
+  .tutorial-text { font-size: 12.5px; }
+}
+@media (max-width: 600px) { .tutorial-panel { top: 60px; } .hud.is-touch .touch-tools { top: 200px; } }
