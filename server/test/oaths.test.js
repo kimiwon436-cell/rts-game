@@ -334,3 +334,19 @@ test('불멸의 맹세: 솔라리온은 60초 뒤 금 300을 치르고 영주관
   assert.ok(revived.some((e) => e[0] === GAME_EVENT.ULTIMATE_REVIVED));
   assert.equal(player.revive, null);
 });
+
+test('등에 탄 유닛은 명령을 받지 않고, 다시 태우라고 해도 상태가 꼬이지 않는다', () => {
+  const world = newWorld();
+  const arkanon = setupUltimate(world, 0, 'arkanon', 40, 40);
+  const archer = world.spawnUnit('longbowman', 0, 40.5, 40);
+  world.boardUnit(arkanon, archer);
+  stepWorld(world);
+
+  // 탄 채로 이동·태우기 명령을 받아도 무시된다
+  assert.equal(command(world, 0, { type: CMD.MOVE, unitIds: [archer.id], x: 20, y: 20 }), REJECT.INVALID_TARGET);
+  assert.equal(command(world, 0, { type: CMD.BOARD, unitIds: [archer.id], targetId: arkanon.id }), REJECT.INVALID_TARGET);
+  runSeconds(world, 1);
+  assert.equal(archer.carrierId, arkanon.id);
+  assert.equal(archer.order, null);
+  assert.equal(archer.x, arkanon.x);
+});

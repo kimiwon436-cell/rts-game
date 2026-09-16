@@ -84,7 +84,7 @@ function applyAuras(world) {
     const aura = UNITS[source.type].aura;
     if (!aura || source.hp <= 0 || source.carrierId) continue;
     for (const unit of world.units.values()) {
-      if (unit.owner !== source.owner || unit.id === source.id) continue; // 아군만, 자기 자신은 빼고
+      if (world.areEnemies(unit.owner, source.owner) || unit.id === source.id) continue; // 아군(같은 팀)만, 자기 자신은 빼고
       if (distance(unit, source) <= aura.radius + UNITS[unit.type].radius) {
         unit.aura = { damage: aura.damage, resist: aura.resist };
       }
@@ -131,7 +131,7 @@ function updateChannels(world) {
     const ability = ABILITIES[channel.ability];
     pushEffect(world, unit, channel.ability, channel.x, channel.y, PHASE.DONE);
     for (const target of world.units.values()) {
-      if (target.owner === unit.owner) continue;
+      if (!world.areEnemies(target.owner, unit.owner)) continue;
       if (Math.hypot(target.x - channel.x, target.y - channel.y) <= ability.radius + UNITS[target.type].radius) {
         abilityHit(world, unit, target, ability.damage, ability.damageType);
       }
@@ -300,7 +300,7 @@ function dawnCharge(world, unit, ability, point) {
   const end = { x: start.x + dirX * travelled, y: start.y + dirY * travelled };
 
   for (const target of world.units.values()) {
-    if (target.owner === unit.owner) continue;
+    if (!world.areEnemies(target.owner, unit.owner)) continue;
     if (distanceToSegment(target, start, end) > ability.halfWidth + UNITS[target.type].radius) continue;
     abilityHit(world, unit, target, ability.damage, ability.damageType);
     target.stunUntil = Math.max(target.stunUntil, world.tick + toTicks(ability.stun));
@@ -319,7 +319,7 @@ function dawnCharge(world, unit, ability, point) {
 function timeWard(world, unit, ability, point) {
   const until = world.tick + toTicks(ability.duration);
   for (const target of world.units.values()) {
-    if (target.owner === unit.owner) continue;
+    if (!world.areEnemies(target.owner, unit.owner)) continue;
     if (Math.hypot(target.x - point.x, target.y - point.y) > ability.radius + UNITS[target.type].radius) continue;
     target.slowUntil = Math.max(target.slowUntil, until);
   }

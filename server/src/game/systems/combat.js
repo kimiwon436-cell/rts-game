@@ -20,8 +20,9 @@ const isUnit = (entity) => UNITS[entity.type] !== undefined;
 const acquireRange = (attack) => (isMelee(attack) ? MELEE_ACQUIRE_RANGE : attack.range + RANGED_ACQUIRE_EXTRA);
 const targetInfo = (entity) =>
   isUnit(entity) ? { def: UNITS[entity.type], shieldWall: entity.shieldWall } : { building: true, type: entity.type };
-// 등에 탄 유닛은 때릴 수 없다 (피해 면역)
-const isEnemyAlive = (entity, owner) => Boolean(entity) && entity.hp > 0 && entity.owner !== owner && !entity.carrierId;
+// 적 = 다른 팀. 등에 탄 유닛은 때릴 수 없다 (피해 면역)
+const isEnemyAlive = (world, entity, owner) =>
+  Boolean(entity) && entity.hp > 0 && world.areEnemies(entity.owner, owner) && !entity.carrierId;
 
 /** 등 위의 원거리 유닛은 사거리가 늘어난다 */
 const rangeBonus = (unit) => (unit.carrierId ? GARRISON.rangeBonus : 0);
@@ -58,7 +59,7 @@ function chooseTarget(world, unit) {
 
   if (order?.type === 'attack') {
     const target = world.entity(order.targetId);
-    if (isEnemyAlive(target, unit.owner)) {
+    if (isEnemyAlive(world, target, unit.owner)) {
       unit.combatTargetId = target.id;
       return target;
     }
@@ -67,7 +68,7 @@ function chooseTarget(world, unit) {
   }
 
   let target = unit.combatTargetId != null ? world.entity(unit.combatTargetId) : null;
-  if (!isEnemyAlive(target, unit.owner)) target = null;
+  if (!isEnemyAlive(world, target, unit.owner)) target = null;
   const seekRange = acquireRange(def.attack) + rangeBonus(unit);
   if (target && unit.autoTarget && gapBetween(unit, target) > seekRange + LEASH_EXTRA) target = null;
   if (!target && unit.combatTargetId != null) disengage(world, unit);
@@ -102,7 +103,7 @@ function findEnemy(world, unit, def) {
   // 나를 때린 적이 쫓을 만한 거리에 있으면 먼저 반격한다
   const attacker = unit.lastAttackerId != null ? world.entity(unit.lastAttackerId) : null;
   if (
-    isEnemyAlive(attacker, unit.owner) &&
+    isEnemyAlive(world, attacker, unit.owner) &&
     gapBetween(unit, attacker) <= range + LEASH_EXTRA &&
     computeDamage(def, targetInfo(attacker)) > 0
   ) {
@@ -112,7 +113,7 @@ function findEnemy(world, unit, def) {
   let best = null;
   let bestScore = Infinity;
   for (const other of world.units.values()) {
-    if (other.owner === unit.owner || other.carrierId) continue;
+    if (!world.areEnemies(other.owner, unit.owner) || other.carrierId) continue;
     if (Math.abs(other.x - unit.x) > range + 1 || Math.abs(other.y - unit.y) > range + 1) continue;
     const gap = gapBetween(unit, other);
     if (gap > range || computeDamage(def, targetInfo(other)) <= 0) continue;
@@ -123,7 +124,7 @@ function findEnemy(world, unit, def) {
     }
   }
   for (const building of world.buildings.values()) {
-    if (building.owner === unit.owner) continue;
+    if (!world.areEnemies(building.owner, unit.owner)) continue;
     const gap = gapBetween(unit, building);
     if (gap > range) continue;
     const score = gap + BUILDING_TARGET_PENALTY;
@@ -190,12 +191,14 @@ function strike(world, attacker, def, target) {
   const cx = isUnit(target) ? target.x : target.x + target.w / 2;
   const cy = isUnit(target) ? target.y : target.y + target.h / 2;
   for (const unit of world.units.values()) {
-    if (unit.owner !== attacker.owner && Math.hypot(unit.x - cx, unit.y - cy) <= splash + UNITS[unit.type].radius) {
+    if (world.areEnemies(unit.owner, attacker.owner) && Math.hypot(unit.x - cx, unit.y - cy) <= splash + UNITS[unit.type].radius) {
       hit(world, attacker, def, unit);
     }
   }
   for (const building of world.buildings.values()) {
-    if (building.owner !== attacker.owner && distanceToRect(cx, cy, building) <= splash) hit(world, attacker, def, building);
+    if (world.areEnemies(building.owner, attacker.owner) && distanceToRect(cx, cy, building) <= splash) {
+      hit(world, attacker, def, building);
+    }
   }
 }
 
@@ -214,7 +217,7 @@ function chainStrike(world, attacker, def, target, chain) {
     current = null;
     let best = CHAIN_RANGE;
     for (const other of world.units.values()) {
-      if (other.owner === attacker.owner || struck.has(other.id) || other.carrierId || other.hp <= 0) continue;
+      if (!world.areEnemies(other.owner, attacker.owner) || struck.has(other.id) || other.carrierId || other.hp <= 0) continue;
       const d = Math.hypot(other.x - from.x, other.y - from.y);
       if (d <= best) {
         best = d;
@@ -243,11 +246,11 @@ function updateTower(world, building, dt) {
   if (building.cooldown > 0) building.cooldown = Math.max(0, building.cooldown - dt);
 
   let target = building.combatTargetId != null ? world.units.get(building.combatTargetId) : null;
-  if (!isEnemyAlive(target, building.owner) || towerGap(building, target) > def.attack.range) target = null;
+  if (!isEnemyAlive(world, target, building.owner) || towerGap(building, target) > def.attack.range) target = null;
   if (!target && (world.tick + building.id) % ACQUIRE_EVERY_TICKS === 0) {
     let bestScore = Infinity;
     for (const unit of world.units.values()) {
-      if (unit.owner === building.owner || unit.carrierId) continue;
+      if (!world.areEnemies(unit.owner, building.owner) || unit.carrierId) continue;
       const gap = towerGap(building, unit);
       if (gap > def.attack.range) continue;
       const score = gap + (UNITS[unit.type].worker ? WORKER_TARGET_PENALTY : 0);

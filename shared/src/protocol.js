@@ -3,23 +3,36 @@
 export const EV = Object.freeze({
   // 클라이언트 → 서버 (로비 이벤트는 ack 콜백으로 응답)
   NET_PING: 'net:ping',
+  PROFILE_CREATE: 'profile:create', // { nickname } — 가입 직후 한 번
   LOBBY_LIST: 'lobby:list',
-  LOBBY_CREATE: 'lobby:create', // { name }
+  LOBBY_CREATE: 'lobby:create', // { name, mode: '1v1' | '2v2' | '3v3' }
   LOBBY_JOIN: 'lobby:join', // { roomId }
   LOBBY_LEAVE: 'lobby:leave',
   LOBBY_READY: 'lobby:ready', // { ready }
+  LOBBY_TEAM: 'lobby:team', // { team: 0 | 1 }
+  LOBBY_SETTINGS: 'lobby:settings', // { mode?, mapId? } — 방장만
+  RANKED_JOIN: 'ranked:join', // { mode } — 랭킹전 매칭 대기열에 들어간다
+  RANKED_LEAVE: 'ranked:leave',
+  RANKED_LEADERBOARD: 'ranked:leaderboard', // { mode } → { entries, me }
+  CHAT_SEND: 'chat:send', // { text, scope: 'all' | 'team' } — 방(대기실·경기) 안에서만
   GAME_CMD: 'game:cmd', // { seq, type, ... } — 응답 없음. 거부되면 GAME_REJECT
 
   // 서버 → 클라이언트
+  SESSION_PROFILE: 'session:profile', // 접속하자마자: 프로필 | null (null이면 닉네임부터 정한다)
   LOBBY_UPDATE: 'lobby:update', // RoomSummary[]
   LOBBY_ROOM: 'lobby:room', // RoomDetail | null
   GAME_COUNTDOWN: 'game:countdown', // { seconds } — seconds가 0이면 취소
-  GAME_START: 'game:start', // { roomId, mapId, players }
+  GAME_START: 'game:start', // { roomId, mapId, mode, ranked, players: [{ uid, nickname, slot, team }] }
   GAME_SNAP: 'game:snap', // 틱마다 보내는 상태 (shared/src/snapshot.js)
   GAME_REJECT: 'game:reject', // { seq, reason }
-  GAME_END: 'game:end', // { winner, reason, durationSec, players }
+  GAME_END: 'game:end', // { winnerTeam, reason, durationSec, mode, ranked, players, ratings? }
   GAME_RESUME: 'game:resume', // 끊겼다 돌아온 플레이어에게: { roomId, mapId, players }
   SESSION_REPLACED: 'session:replaced',
+  RANKED_STATUS: 'ranked:status', // { mode, waitingSec, queueSize } | null (대기열에서 나왔다)
+  RANKED_FOUND: 'ranked:found', // { mode, mapId } — 곧 LOBBY_ROOM·GAME_COUNTDOWN이 온다
+  RANKED_RESULT: 'ranked:result', // { mode, changes: [{ nickname, team, before, after, delta, won }] }
+  CHAT_MESSAGE: 'chat:message', // { id, scope, text, at, from: { nickname, team, slot } | null(안내) }
+  CHAT_HISTORY: 'chat:history', // { roomId, messages } — 방에 들어오거나 다시 접속했을 때
 });
 
 export const ERR = Object.freeze({
@@ -29,6 +42,18 @@ export const ERR = Object.freeze({
   ROOM_FULL: 'ROOM_FULL',
   ROOM_NOT_WAITING: 'ROOM_NOT_WAITING',
   NOT_IN_ROOM: 'NOT_IN_ROOM',
+  NOT_HOST: 'NOT_HOST',
+  IN_ROOM: 'IN_ROOM', // 방에 있는 동안은 매칭을 시작할 수 없다
+  MATCH_CANCELLED: 'MATCH_CANCELLED', // 시작 전에 누가 나가 매칭이 취소됐다 (다시 대기열로)
+  CHAT_RATE_LIMITED: 'CHAT_RATE_LIMITED',
+  CHAT_EMPTY: 'CHAT_EMPTY',
+  TEAM_FULL: 'TEAM_FULL',
+  INVALID_SETTINGS: 'INVALID_SETTINGS',
+  NO_PROFILE: 'NO_PROFILE', // 닉네임을 정하기 전에는 로비를 쓸 수 없다
+  PROFILE_EXISTS: 'PROFILE_EXISTS',
+  NICKNAME_INVALID: 'NICKNAME_INVALID', // 자세한 이유는 응답의 reason
+  NICKNAME_TAKEN: 'NICKNAME_TAKEN',
+  UNAVAILABLE: 'UNAVAILABLE', // 저장소 오류 등 잠시 뒤 다시 시도
 });
 
 export const ROOM_STATUS = Object.freeze({

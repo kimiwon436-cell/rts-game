@@ -74,6 +74,7 @@ export class World {
         uid: p.uid,
         nickname: p.nickname,
         slot: p.slot,
+        team: p.team ?? p.slot, // 1v1이면 슬롯이 곧 팀이다
         ...STARTING_RESOURCES,
         pop: 0,
         popCap: 0,
@@ -409,6 +410,15 @@ export class World {
   }
 
   // ---------- 조회 ----------
+
+  teamOf(slot) {
+    return this.players[slot]?.team ?? slot;
+  }
+
+  /** 서로 다른 팀이면 적이다. 같은 팀(나 자신 포함)은 공격하지 않고 오라 같은 이로운 효과를 나눈다 */
+  areEnemies(slotA, slotB) {
+    return this.teamOf(slotA) !== this.teamOf(slotB);
+  }
 
   /** id로 유닛이나 건물을 찾는다 (둘은 같은 id 공간을 쓴다) */
   entity(id) {

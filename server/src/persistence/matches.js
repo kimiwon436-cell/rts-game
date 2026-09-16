@@ -20,17 +20,19 @@ export async function saveMatchResult(record) {
   batch.set(db.collection('matches').doc(record.matchId), {
     matchId: record.matchId,
     mapId: record.mapId,
+    mode: record.mode ?? '1v1',
+    ranked: Boolean(record.ranked),
     reason: record.reason,
-    winnerSlot: record.winner ?? null,
+    winnerTeam: record.winnerTeam ?? null,
     startedAt: new Date(record.startedAt),
     endedAt: new Date(endedAt),
     durationSec: record.durationSec,
-    players: record.players.map(({ slot, uid, nickname, defeated }) => ({ slot, uid, nickname, defeated })),
+    players: record.players.map(({ slot, team, uid, nickname, defeated }) => ({ slot, team, uid, nickname, defeated })),
     uids: record.players.map((p) => p.uid), // array-contains로 내 경기만 찾기 위한 색인용
   });
 
   for (const player of record.players) {
-    const won = record.winner != null && player.slot === record.winner;
+    const won = record.winnerTeam != null && player.team === record.winnerTeam;
     batch.set(
       db.collection('users').doc(player.uid),
       {

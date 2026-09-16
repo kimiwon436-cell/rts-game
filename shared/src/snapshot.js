@@ -85,10 +85,10 @@ export function decodeFlags(flags) {
   };
 }
 
-/** 모두에게 보이는 플레이어 정보: [slot, 시대, 왕관 몰락까지 남은 초(없으면 -1), 패배 0|1, 맹세(없으면 -1)] */
+/** 모두에게 보이는 플레이어 정보: [slot, 시대, 왕관 몰락까지 남은 초(없으면 -1), 패배 0|1, 맹세(없으면 -1), 팀] */
 export function encodePublicPlayer(p, tick) {
   const collapseSeconds = p.collapseAt == null ? -1 : Math.max(0, Math.ceil(((p.collapseAt - tick) * TICK_MS) / 1000));
-  return [p.slot, p.age, collapseSeconds, p.defeated ? 1 : 0, p.oath ? OATH_IDS.indexOf(p.oath) : -1];
+  return [p.slot, p.age, collapseSeconds, p.defeated ? 1 : 0, p.oath ? OATH_IDS.indexOf(p.oath) : -1, p.team ?? p.slot];
 }
 
 export function decodePublicPlayer(a) {
@@ -98,6 +98,7 @@ export function decodePublicPlayer(a) {
     collapseSeconds: a[2] < 0 ? null : a[2],
     defeated: Boolean(a[3]),
     oath: a[4] >= 0 ? OATH_IDS[a[4]] : null,
+    team: a[5] ?? a[0],
   };
 }
 

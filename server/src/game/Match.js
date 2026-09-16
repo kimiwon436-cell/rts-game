@@ -17,13 +17,17 @@ export class Match {
    * @param {object} p
    * @param {string} p.roomId
    * @param {string} p.mapId
-   * @param {Array} p.players [{ uid, nickname, slot }]
+   * @param {Array} p.players [{ uid, nickname, slot, team }]
+   * @param {string} [p.mode] '1v1' | '2v2' | '3v3'
+   * @param {boolean} [p.ranked] 랭킹전이면 결과로 레이팅이 바뀐다
    * @param {Function} p.getSocket uid로 소켓을 찾는 함수 (없으면 undefined)
    * @param {Function} [p.onEnd] 경기가 끝나면 (result, record)로 한 번 불린다
    */
-  constructor({ roomId, mapId, players, getSocket, onEnd }) {
+  constructor({ roomId, mapId, players, getSocket, onEnd, mode = '1v1', ranked = false }) {
     this.roomId = roomId;
     this.mapId = mapId;
+    this.mode = mode;
+    this.ranked = ranked;
     this.getSocket = getSocket;
     this.onEnd = onEnd;
     this.ended = false;
@@ -119,23 +123,27 @@ export class Match {
   finish() {
     this.ended = true;
     this.stop();
-    const { winner, reason, tick } = this.world.result;
+    const { winnerTeam, reason, tick } = this.world.result;
     const durationSec = Math.round((tick * TICK_MS) / 1000);
     const players = this.world.players.filter(Boolean);
     const result = {
-      winner,
+      winnerTeam,
       reason,
       durationSec,
-      players: players.map(({ slot, nickname, defeated }) => ({ slot, nickname, defeated })),
+      mode: this.mode,
+      ranked: this.ranked,
+      players: players.map(({ slot, team, nickname, defeated }) => ({ slot, team, nickname, defeated })),
     };
     const record = {
       matchId: `${this.roomId}-${this.startedAt}`,
       mapId: this.mapId,
+      mode: this.mode,
+      ranked: this.ranked,
       startedAt: this.startedAt,
       durationSec,
       reason,
-      winner,
-      players: players.map(({ slot, uid, nickname, defeated }) => ({ slot, uid, nickname, defeated })),
+      winnerTeam,
+      players: players.map(({ slot, team, uid, nickname, defeated }) => ({ slot, team, uid, nickname, defeated })),
     };
     for (const uid of this.uidOfSlot.values()) this.getSocket(uid)?.emit(EV.GAME_END, result);
     this.onEnd?.(result, record);

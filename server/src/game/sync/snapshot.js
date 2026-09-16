@@ -7,6 +7,7 @@ import {
   encodePublicPlayer,
   encodeUnit,
 } from '@rune/shared/snapshot.js';
+import { TERRAIN } from '@rune/shared/map/grid.js';
 
 const publicPlayers = (world) => world.players.filter(Boolean).map((p) => encodePublicPlayer(p, world.tick));
 
@@ -131,6 +132,11 @@ export class SnapshotFeed {
 
   /** 처음 들어왔거나 끊겼다 돌아온 플레이어에게 보내는 전체 상태 */
   full(world, slot) {
+    // 이미 베인 나무. 델타에서는 TREE_FELLED 이벤트로 알리지만, 전체 상태에는 따로 실어야 한다
+    const felled = [];
+    for (let i = 0; i < world.tiles.length; i++) {
+      if (world.map.tiles[i] === TERRAIN.TREE && world.tiles[i] !== TERRAIN.TREE) felled.push(i);
+    }
     const own = encodeOwn(world.buildings.values(), world.units.values(), slot);
     const me = encodePlayer(world.players[slot]);
     const players = publicPlayers(world);
@@ -144,6 +150,7 @@ export class SnapshotFeed {
       addU: Array.from(world.units.values(), encodeUnit),
       addB: Array.from(world.buildings.values(), encodeBuilding),
       mines: Array.from(world.mines.values(), (mine) => [mine.id, mine.amount]),
+      felled,
       me,
       own,
     };
