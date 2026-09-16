@@ -20,6 +20,19 @@ export function connectToServer({ getToken }) {
 }
 
 /**
+ * 가입 화면의 아이디 중복 확인. 서버가 모르면(개발 모드 서버, 연결 실패) { available: null }
+ */
+export async function checkLoginId(name) {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/login-id?name=${encodeURIComponent(name)}`);
+    if (!res.ok) return { available: null };
+    return await res.json();
+  } catch {
+    return { available: null };
+  }
+}
+
+/**
  * 가입 화면에서 닉네임을 쓸 수 있는지 미리 묻는다.
  * 서버에 닿지 않으면 { available: null } — 확인을 건너뛰고 가입할 때 서버가 다시 판정한다.
  */
