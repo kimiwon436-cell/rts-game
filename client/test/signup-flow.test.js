@@ -51,7 +51,7 @@ const nextSession = (auth) => new Promise((resolve) => {
 test('가입한 계정은 닉네임을 정한 뒤 로비에 들어가고, 다시 열면 로그인과 닉네임이 그대로다', async () => {
   const storage = memoryStorage();
   const auth = createDevAuth(storage);
-  const session = await auth.signUp('newbie@example.com', 'dummy-pass-2468');
+  const session = await auth.signUp('newbie01', 'dummy-pass-2468');
 
   // 첫 접속: 프로필이 없으니 가입 폼에서 고른 닉네임을 예약한다
   const first = await connectWith(session);
@@ -75,7 +75,7 @@ test('로그아웃하고 다른 계정으로 가입하면, 앞 사람의 닉네�
   const storage = memoryStorage();
   const auth = createDevAuth(storage);
   await auth.signOut();
-  const other = await auth.signUp('second@example.com', 'dummy-pass-1357');
+  const other = await auth.signUp('second01', 'dummy-pass-1357');
   const { socket, profile } = await connectWith(other);
   assert.equal(profile, null);
   const taken = await socket.emitWithAck(EV.PROFILE_CREATE, { nickname: '새벽기사' });

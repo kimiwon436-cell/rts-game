@@ -4,7 +4,7 @@ import { GAME_MODES, MAP_LIST } from '@rune/shared/map/maps/index.js';
 import { NICKNAME_MESSAGES } from '@rune/shared/rules/nickname.js';
 import { SERVER_URL } from './config.js';
 import { authErrorMessage, createAuth } from './auth.js';
-import { checkNickname, connectToServer, request, startPing } from './net/socket.js';
+import { checkLoginId, checkNickname, connectToServer, request, startPing } from './net/socket.js';
 import { toast } from './ui/toast.js';
 import { errorMessage } from './ui/messages.js';
 import { createAuthScreen } from './ui/authScreen.js';
@@ -21,7 +21,7 @@ const canvas = document.getElementById('game');
 
 const state = {
   auth: null, // createAuth() 결과
-  session: null, // { mode, uid, email, getToken } — 로그인한 계정
+  session: null, // { mode, uid, loginId, getToken } — 로그인한 계정
   profile: null, // 서버가 보낸 프로필 { uid, nickname, ratings, ... }
   pendingNickname: null, // 가입 폼에서 고른 닉네임. 접속하자마자 예약한다
   socket: null,
@@ -85,17 +85,18 @@ function onSession(session) {
 function showAuth(errorText = '') {
   const screen = createAuthScreen({
     mode: state.auth.mode,
-    onSignIn: (email, password) => state.auth.signIn(email, password),
-    onSignUp: async (email, password, nickname) => {
+    onSignIn: (loginId, password) => state.auth.signIn(loginId, password),
+    onSignUp: async (loginId, password, nickname) => {
       state.pendingNickname = nickname; // 계정이 만들어지면 접속하자마자 이 닉네임을 예약한다
       try {
-        await state.auth.signUp(email, password);
+        await state.auth.signUp(loginId, password);
       } catch (err) {
         state.pendingNickname = null;
         throw err;
       }
     },
-    onResetPassword: (email) => state.auth.sendPasswordReset(email),
+    // 개발 모드 계정은 이 브라우저에 있어서 직접 보고, Firebase 계정은 게임 서버에 묻는다
+    onCheckLoginId: (loginId) => (state.auth.checkLoginId ? state.auth.checkLoginId(loginId) : checkLoginId(loginId)),
     onCheckNickname: checkNickname,
     onOpenReplay: openReplay,
     onOpenTutorial: openTutorial,
@@ -126,7 +127,7 @@ function showNicknameScreen(value = '', errorText = '') {
   show(
     'nickname',
     createNicknameScreen({
-      email: state.session?.email,
+      loginId: state.session?.loginId,
       value,
       errorText,
       onSubmit: claimNickname,

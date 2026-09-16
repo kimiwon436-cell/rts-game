@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { NICKNAME_ERROR, validateNickname } from '@rune/shared/rules/nickname.js';
+import { LOGIN_ID_ERROR, validateLoginId } from '@rune/shared/rules/loginId.js';
 import { createAuthMiddleware } from './net/auth.js';
 import { Lobby } from './net/lobby.js';
 import { Matchmaker } from './net/matchmaking.js';
@@ -16,8 +17,9 @@ function sendJson(res, status, body, headers = {}) {
  * HTTP 요청 (Socket.IO가 아닌 것).
  * - GET /health
  * - GET /api/nickname?name=… — 가입 화면에서 닉네임을 미리 확인한다 (실제 예약은 가입할 때 트랜잭션으로)
+ * - GET /api/login-id?name=… — 가입 화면의 아이디 중복 확인 (available: null이면 이 서버는 모른다)
  */
-function createHttpHandler({ profiles, clientOrigins }) {
+function createHttpHandler({ profiles, loginIds, clientOrigins }) {
   return async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const origin = req.headers.origin;
@@ -42,6 +44,21 @@ function createHttpHandler({ profiles, clientOrigins }) {
       }
       return;
     }
+    if (url.pathname === '/api/login-id' && req.method === 'GET') {
+      const checked = validateLoginId(url.searchParams.get('name') ?? '');
+      if (!checked.ok) {
+        sendJson(res, 200, { available: false, reason: checked.reason }, cors);
+        return;
+      }
+      try {
+        const available = await loginIds.isAvailable(checked.loginId);
+        sendJson(res, 200, available === false ? { available: false, reason: LOGIN_ID_ERROR.TAKEN } : { available }, cors);
+      } catch (err) {
+        console.error('[아이디 확인 실패]', err);
+        sendJson(res, 503, { error: 'UNAVAILABLE' }, cors);
+      }
+      return;
+    }
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('Rune & Crown game server');
   };
@@ -54,10 +71,11 @@ export function createGameServer({
   countdownSec,
   reconnectGraceSec,
   profiles = new MemoryProfileStore(),
+  loginIds = { isAvailable: async () => null },
   matchIntervalMs = 1000,
   random = Math.random,
 }) {
-  const httpServer = createServer(createHttpHandler({ profiles, clientOrigins }));
+  const httpServer = createServer(createHttpHandler({ profiles, loginIds, clientOrigins }));
   const io = new Server(httpServer, {
     cors: { origin: clientOrigins },
     perMessageDeflate: { threshold: 1024 },

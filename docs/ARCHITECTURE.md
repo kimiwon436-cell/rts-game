@@ -479,8 +479,15 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 
 ### 인증 흐름 (`client/src/auth.js`, `server/src/net/auth.js`, `server/src/persistence/profiles.js`)
 
-1. **가입·로그인**: 이메일 + 비밀번호 (Firebase Auth). `browserLocalPersistence`라 브라우저를 닫았다 열어도 로그인이 유지되고,
-   페이지를 열면 `onAuthStateChanged`가 저장된 로그인을 돌려줘 로그인 화면 없이 바로 접속한다. 비밀번호 재설정 메일도 Firebase가 보낸다.
+1. **가입·로그인**: **아이디** + 비밀번호. 아이디는 영문·숫자·밑줄 4~16자, 대소문자 무시 (`shared/src/rules/loginId.js`).
+   Firebase의 비밀번호 로그인은 이메일 형식을 요구하므로 아이디를 사용자에게 보이지 않는 내부 주소
+   `아이디@id.<프로젝트ID>.firebaseapp.com`로 바꿔 이메일·비밀번호 계정을 만든다. 프로젝트 전용 도메인이라
+   다른 사람이 이 주소를 가질 수 없고, 비밀번호 해싱·무차별 대입 방지·토큰 발급은 Firebase가 그대로 맡는다.
+   아이디 중복은 가입할 때 Firebase가 막고(`auth/email-already-in-use`), 가입 화면은 `GET /api/login-id`로 미리 확인한다
+   (서버가 Admin SDK `getUserByEmail`로 조회). 메일이 오가지 않으므로 **비밀번호 재설정은 없다.**
+   `browserLocalPersistence`라 브라우저를 닫았다 열어도 로그인이 유지되고, 페이지를 열면 `onAuthStateChanged`가
+   저장된 로그인을 돌려줘 로그인 화면 없이 바로 접속한다.
+   아이디(로그인용)와 닉네임(화면·순위표·채팅에 보이는 이름)은 따로다 — 로그인 아이디를 남에게 드러내지 않는다.
 2. ID 토큰을 Socket.IO 핸드셰이크에 담아 연결한다 (`auth`를 함수로 넘겨 재연결마다 새 토큰). **닉네임은 보내지 않는다.**
 3. 서버 미들웨어가 Admin SDK로 토큰을 검증하고, 저장소에서 **프로필**(닉네임·레이팅·전적)을 읽어 `socket.data.profile`에 둔다.
 4. 접속하자마자 서버가 `session:profile`을 보낸다.
@@ -502,7 +509,7 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 | `nicknames/{key}` | uid, nickname, createdAt — 닉네임 예약 (key = NFKC 소문자) | 서버만 |
 | `matches/{matchId}` | matchId, mapId, players[{slot, uid, nickname, defeated}], uids[], winnerSlot, reason, durationSec, startedAt, endedAt | 서버만 |
 
-모든 쓰기는 게임 서버(Admin SDK)만 한다. 규칙은 로그인한 사람에게 읽기만 허용한다. 이메일은 Firestore에 저장하지 않는다.
+모든 쓰기는 게임 서버(Admin SDK)만 한다. 규칙은 로그인한 사람에게 읽기만 허용한다. 로그인 아이디는 Firestore에 저장하지 않는다.
 
 쓰기는 경기가 끝날 때 배치 한 번(`server/src/persistence/matches.js`), 경기당 1 + 인원 수. 틱마다 쓰지 않는다.
 `matchId`는 `방id-시작시각`이라 같은 경기를 두 번 써도 덮어쓰기라 안전하다. `uids` 배열은 "내 경기만 보기"(array-contains) 색인용이다.

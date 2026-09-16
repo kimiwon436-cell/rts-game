@@ -16,7 +16,7 @@ export function cleanText(value, maxLength) {
 
 /**
  * Socket.IO 핸드셰이크의 토큰을 검증하고 socket.data에 uid와 프로필을 넣는다.
- * - firebase 모드: Firebase ID 토큰만 통과 (이메일·비밀번호로 로그인한 계정)
+ * - firebase 모드: Firebase ID 토큰만 통과 (아이디·비밀번호로 로그인한 계정)
  * - dev 모드: "dev:<무작위 id>" 형식의 게스트 토큰을 uid로 그대로 쓴다 (로컬 개발 전용)
  *
  * 닉네임은 더 이상 클라이언트가 보내지 않는다. 서버에 저장된 프로필의 닉네임만 쓴다.

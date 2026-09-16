@@ -13,7 +13,13 @@ let url;
 const sockets = [];
 
 before(async () => {
-  server = createGameServer({ authMode: 'dev', clientOrigins: ['http://localhost:5173'], countdownSec: 0.05 });
+  server = createGameServer({
+    authMode: 'dev',
+    clientOrigins: ['http://localhost:5173'],
+    countdownSec: 0.05,
+    // Firebase 계정 조회 흉내: takenid만 이미 있다
+    loginIds: { isAvailable: async (loginId) => loginId !== 'takenid' },
+  });
   server.httpServer.listen(0);
   await once(server.httpServer, 'listening');
   url = `http://localhost:${server.httpServer.address().port}`;
@@ -117,4 +123,12 @@ test('닉네임 확인 HTTP: 가입 화면에서 미리 알려 준다 (허용한
 
   assert.equal((await check('빈이름', 'http://localhost:5173')).cors, 'http://localhost:5173');
   assert.equal((await check('빈이름', 'https://evil.example')).cors, null);
+});
+
+test('아이디 중복 확인 HTTP: 규칙을 먼저 보고, 계정 조회로 중복을 알려 준다', async () => {
+  const check = async (name) => (await fetch(`${url}/api/login-id?name=${encodeURIComponent(name)}`)).json();
+  assert.deepEqual(await check('Knight01'), { available: true });
+  assert.deepEqual(await check('TakenId'), { available: false, reason: 'TAKEN' }, '대소문자는 구분하지 않는다');
+  assert.deepEqual(await check('ab'), { available: false, reason: 'TOO_SHORT' });
+  assert.deepEqual(await check('새벽기사'), { available: false, reason: 'INVALID_CHARS' });
 });

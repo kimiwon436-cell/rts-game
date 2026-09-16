@@ -1,4 +1,5 @@
 import { NICKNAME_MAX, NICKNAME_MESSAGES, PASSWORD_MIN, validateNickname } from '@rune/shared/rules/nickname.js';
+import { LOGIN_ID_MAX, LOGIN_ID_MESSAGES, LOGIN_ID_MIN, validateLoginId } from '@rune/shared/rules/loginId.js';
 import { authErrorMessage } from '../auth.js';
 import { h } from './dom.js';
 
@@ -34,22 +35,32 @@ function passwordField({ label, autocomplete, hint }) {
   return { el, input };
 }
 
-function textField({ label, type = 'text', autocomplete, placeholder, maxlength }) {
+function textField({ label, autocomplete, placeholder, maxlength }) {
   const id = `field-${++fieldSeq}`;
-  const input = h('input', { class: 'input', id, type, autocomplete, placeholder, maxlength, required: true });
+  const input = h('input', {
+    class: 'input',
+    id,
+    type: 'text',
+    autocomplete,
+    placeholder,
+    maxlength,
+    required: true,
+    autocapitalize: 'off',
+    spellcheck: 'false',
+  });
   const hint = h('p', { class: 'field-hint', 'aria-live': 'polite' });
   const el = h('div', { class: 'field' }, h('label', { class: 'label', for: id }, label), input, hint);
   return { el, input, hint };
 }
 
 /**
- * 닉네임 칸. 입력을 멈추면 규칙을 먼저 보고, 괜찮으면 서버에 쓸 수 있는지 물어본다.
+ * 규칙과 중복을 확인하는 칸 (아이디·닉네임). 입력을 멈추면 규칙을 먼저 보고, 괜찮으면 쓸 수 있는지 물어본다.
  * @returns {{ el, input, check: () => Promise<string | null> }} check는 문제가 있으면 문장을 돌려준다
  */
-export function nicknameField({ onCheckNickname, value = '' }) {
-  const field = textField({ label: '닉네임', autocomplete: 'nickname', placeholder: '예: 새벽기사', maxlength: NICKNAME_MAX });
+function checkedField({ label, autocomplete, placeholder, maxlength, rule, validate, messages, valueKey, onCheck, value = '' }) {
+  const field = textField({ label, autocomplete, placeholder, maxlength });
   field.input.value = value;
-  field.hint.textContent = `한글·영문·숫자·밑줄 2~${NICKNAME_MAX}자`;
+  field.hint.textContent = rule;
   let timer = null;
   let seq = 0;
 
@@ -60,22 +71,22 @@ export function nicknameField({ onCheckNickname, value = '' }) {
 
   async function check() {
     clearTimeout(timer);
-    const checked = validateNickname(field.input.value);
+    const checked = validate(field.input.value);
     if (!checked.ok) {
-      setHint(NICKNAME_MESSAGES[checked.reason], 'bad');
-      return NICKNAME_MESSAGES[checked.reason];
+      setHint(messages[checked.reason], 'bad');
+      return messages[checked.reason];
     }
     const mine = ++seq;
     setHint('확인하는 중…');
-    const result = await onCheckNickname(checked.nickname);
+    const result = await onCheck(checked[valueKey]);
     if (mine !== seq) return null; // 그사이 더 새 입력이 있었다
     if (result.available === false) {
-      const message = NICKNAME_MESSAGES[result.reason] ?? '쓸 수 없는 닉네임입니다.';
+      const message = messages[result.reason] ?? `쓸 수 없는 ${label}입니다.`;
       setHint(message, 'bad');
       return message;
     }
-    if (result.available) setHint('쓸 수 있는 닉네임입니다.', 'good');
-    else setHint('서버에 확인하지 못했습니다. 가입할 때 다시 확인합니다.');
+    if (result.available) setHint(`쓸 수 있는 ${label}입니다.`, 'good');
+    else setHint('지금은 확인하지 못했습니다. 가입할 때 다시 확인합니다.');
     return null;
   }
 
@@ -86,8 +97,37 @@ export function nicknameField({ onCheckNickname, value = '' }) {
   return { el: field.el, input: field.input, check };
 }
 
+export function nicknameField({ onCheckNickname, value = '' }) {
+  return checkedField({
+    label: '닉네임',
+    autocomplete: 'nickname',
+    placeholder: '예: 새벽기사',
+    maxlength: NICKNAME_MAX,
+    rule: `게임에 보이는 이름 · 한글·영문·숫자·밑줄 2~${NICKNAME_MAX}자`,
+    validate: validateNickname,
+    messages: NICKNAME_MESSAGES,
+    valueKey: 'nickname',
+    onCheck: onCheckNickname,
+    value,
+  });
+}
+
+function loginIdField({ onCheckLoginId }) {
+  return checkedField({
+    label: '아이디',
+    autocomplete: 'username',
+    placeholder: '예: knight01',
+    maxlength: LOGIN_ID_MAX,
+    rule: `로그인할 때만 씁니다 · 영문·숫자·밑줄 ${LOGIN_ID_MIN}~${LOGIN_ID_MAX}자`,
+    validate: validateLoginId,
+    messages: LOGIN_ID_MESSAGES,
+    valueKey: 'loginId',
+    onCheck: onCheckLoginId,
+  });
+}
+
 /**
- * 첫 화면: 로그인 / 회원가입.
+ * 첫 화면: 로그인 / 회원가입 (아이디 + 비밀번호).
  * onSignIn·onSignUp이 예외를 던지면 문장으로 바꿔 보여 준다. 성공하면 main.js가 화면을 넘긴다.
  */
 export function createAuthScreen({
@@ -95,16 +135,14 @@ export function createAuthScreen({
   tab = 'signin',
   onSignIn,
   onSignUp,
-  onResetPassword,
+  onCheckLoginId,
   onCheckNickname,
   onOpenReplay,
   onOpenTutorial,
 }) {
   const error = h('p', { class: 'form-error', role: 'alert' });
-  const notice = h('p', { class: 'form-notice', role: 'status' });
-  const setMessage = (err = '', note = '') => {
-    error.textContent = err;
-    notice.textContent = note;
+  const setError = (message = '') => {
+    error.textContent = message;
   };
   const busy = (button, on, label) => {
     button.disabled = on;
@@ -112,60 +150,52 @@ export function createAuthScreen({
   };
 
   // ---------- 로그인 ----------
-  const signInEmail = textField({ label: '이메일', type: 'email', autocomplete: 'email', placeholder: 'name@example.com' });
+  const signInId = textField({ label: '아이디', autocomplete: 'username', placeholder: '아이디' });
   const signInPassword = passwordField({ label: '비밀번호', autocomplete: 'current-password' });
   const signInButton = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, '로그인');
-  const resetButton = h('button', { class: 'link-btn', type: 'button' }, '비밀번호를 잊으셨나요?');
-  resetButton.addEventListener('click', async () => {
-    setMessage();
-    try {
-      await onResetPassword(signInEmail.input.value);
-      setMessage('', '비밀번호 재설정 메일을 보냈습니다. 메일함을 확인하세요.');
-    } catch (err) {
-      setMessage(err.code === 'auth/invalid-email' ? '위 칸에 가입한 이메일을 먼저 입력하세요.' : authErrorMessage(err));
-    }
-  });
-  const signInForm = h('form', { class: 'auth-form' }, signInEmail.el, signInPassword.el, signInButton, resetButton);
+  const signInForm = h('form', { class: 'auth-form' }, signInId.el, signInPassword.el, signInButton);
   signInForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    setMessage();
+    setError();
     busy(signInButton, true, '로그인');
     try {
-      await onSignIn(signInEmail.input.value, signInPassword.input.value);
+      await onSignIn(signInId.input.value, signInPassword.input.value);
     } catch (err) {
-      setMessage(authErrorMessage(err));
+      setError(authErrorMessage(err));
       busy(signInButton, false, '로그인');
     }
   });
 
   // ---------- 회원가입 ----------
-  const signUpEmail = textField({ label: '이메일', type: 'email', autocomplete: 'email', placeholder: 'name@example.com' });
+  const signUpId = loginIdField({ onCheckLoginId });
   const nickname = nicknameField({ onCheckNickname });
   const signUpPassword = passwordField({ label: '비밀번호', autocomplete: 'new-password', hint: `${PASSWORD_MIN}자 이상` });
   const confirmPassword = passwordField({ label: '비밀번호 확인', autocomplete: 'new-password' });
   const signUpLabel = '가입하고 시작하기';
   const signUpButton = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, signUpLabel);
-  const signUpForm = h('form', { class: 'auth-form' }, signUpEmail.el, nickname.el, signUpPassword.el, confirmPassword.el, signUpButton);
+  const signUpForm = h('form', { class: 'auth-form' }, signUpId.el, nickname.el, signUpPassword.el, confirmPassword.el, signUpButton);
   signUpForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    setMessage();
+    setError();
     if (signUpPassword.input.value !== confirmPassword.input.value) {
-      setMessage('비밀번호 확인이 맞지 않습니다.');
+      setError('비밀번호 확인이 맞지 않습니다.');
       confirmPassword.input.focus();
       return;
     }
     busy(signUpButton, true, signUpLabel);
-    const nicknameProblem = await nickname.check();
-    if (nicknameProblem) {
-      setMessage(nicknameProblem);
-      busy(signUpButton, false, signUpLabel);
-      nickname.input.focus();
-      return;
+    for (const field of [signUpId, nickname]) {
+      const problem = await field.check();
+      if (problem) {
+        setError(problem);
+        busy(signUpButton, false, signUpLabel);
+        field.input.focus();
+        return;
+      }
     }
     try {
-      await onSignUp(signUpEmail.input.value, signUpPassword.input.value, nickname.input.value.trim());
+      await onSignUp(signUpId.input.value, signUpPassword.input.value, nickname.input.value.trim());
     } catch (err) {
-      setMessage(authErrorMessage(err));
+      setError(authErrorMessage(err));
       busy(signUpButton, false, signUpLabel);
     }
   });
@@ -182,14 +212,14 @@ export function createAuthScreen({
       button.classList.toggle('is-active', active);
       panel.hidden = !active;
     }
-    setMessage();
+    setError();
   }
   tabs.signin.button.addEventListener('click', () => select('signin'));
   tabs.signup.button.addEventListener('click', () => select('signup'));
 
   const modeNote =
     mode === 'firebase'
-      ? '로그인하면 이 브라우저에서는 로그아웃할 때까지 로그인이 유지됩니다.'
+      ? '로그인하면 이 브라우저에서는 로그아웃할 때까지 로그인이 유지됩니다. 비밀번호는 찾을 수 없으니 잘 기억해 두세요.'
       : '개발 모드 · 계정은 이 브라우저에만 저장됩니다 (보안 없음, 로컬 테스트용)';
   const el = h(
     'main',
@@ -210,7 +240,6 @@ export function createAuthScreen({
         signInForm,
         signUpForm,
         error,
-        notice,
       ),
       h('p', { class: 'note' }, modeNote),
       h(
@@ -225,7 +254,7 @@ export function createAuthScreen({
   select(tab);
   return {
     el,
-    focus: () => (tab === 'signin' ? signInEmail : signUpEmail).input.focus(),
-    showError: (message) => setMessage(message),
+    focus: () => (tab === 'signin' ? signInId : signUpId).input.focus(),
+    showError: (message) => setError(message),
   };
 }
