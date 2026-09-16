@@ -26,16 +26,19 @@ const DRAG_THRESHOLD = 5;
 const WELL_SNAP_RADIUS = 4;
 const NOT_ENOUGH = { gold: REJECT.NOT_ENOUGH_GOLD, wood: REJECT.NOT_ENOUGH_WOOD, mana: REJECT.NOT_ENOUGH_MANA };
 
-function endReason(reason, won) {
+/** 경기가 끝난 이유. team이면 "상대 팀" / "우리 팀" 기준으로 말한다 (마지막으로 진 사람의 이유다) */
+function endReason(reason, won, team) {
+  const them = team ? '상대 팀이' : '상대가';
+  const us = team ? '우리 팀이' : '';
   switch (reason) {
     case VICTORY_REASON.SURRENDER:
-      return won ? '상대가 항복했습니다' : '항복했습니다';
+      return won ? `${them} 항복했습니다` : `${us} 항복했습니다`.trim();
     case VICTORY_REASON.LEFT:
-      return won ? '상대가 경기를 떠났습니다' : '경기를 떠났습니다';
+      return won ? `${them} 경기를 떠났습니다` : '경기를 떠났습니다';
     case VICTORY_REASON.ANNIHILATION:
-      return won ? '상대의 유닛과 건물을 모두 무너뜨렸습니다' : '유닛과 건물을 모두 잃었습니다';
+      return won ? `${them} 가진 유닛과 건물을 모두 무너뜨렸습니다` : '유닛과 건물을 모두 잃었습니다';
     default:
-      return won ? '상대가 제한 시간 안에 영주관을 다시 세우지 못했습니다' : '제한 시간 안에 영주관을 다시 세우지 못했습니다';
+      return won ? `${them} 제한 시간 안에 영주관을 다시 세우지 못했습니다` : '제한 시간 안에 영주관을 다시 세우지 못했습니다';
   }
 }
 
@@ -47,7 +50,9 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
   const map = loadMap(mapId);
   const mySlot = players.find((p) => p.uid === me.uid)?.slot ?? 0;
 
-  const world = new ClientWorld(map, mySlot);
+  const world = new ClientWorld(map, mySlot, players);
+  const myTeam = players.find((p) => p.slot === mySlot)?.team ?? mySlot;
+  const teamGame = players.length > 2;
   const camera = new Camera(map.width * TILE_SIZE, map.height * TILE_SIZE);
   const renderer = new Renderer(canvas, world, camera, players);
   const minimap = new Minimap(world, camera);
@@ -124,6 +129,11 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
       const oath = OATHS[OATH_IDS[event[2]]];
       const who = event[1] === mySlot ? '내' : `${playerName(event[1])}의`;
       announce(`${who} 왕국이 ${oath.name}를 맺었습니다 — ${UNITS[oath.unit].name}`);
+    } else if (event[0] === GAME_EVENT.PLAYER_DEFEATED && teamGame && !ended) {
+      const slot = event[1];
+      const who = slot === mySlot ? '내가' : `${playerName(slot)}이(가)`;
+      const side = slot === mySlot ? '' : world.teamOf(slot) === myTeam ? ' (우리 팀)' : ' (상대 팀)';
+      toast(`${who} 쓰러졌습니다${side}. 기지가 무너집니다.`, { error: world.teamOf(slot) === myTeam });
     } else if (event[0] === GAME_EVENT.ULTIMATE_REVIVED) {
       const unit = world.units.get(event[1]);
       if (event[2] === mySlot) toast(`${UNITS[unit?.type ?? 'solarion'].name}이(가) 다시 일어섰습니다.`);
@@ -197,9 +207,9 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
   /** 그 지점의 적 유닛이나 적 건물 */
   function enemyAt(t) {
     const unit = world.unitAt(t.x, t.y);
-    if (unit && !world.isMine(unit)) return unit;
+    if (unit && world.isEnemy(unit)) return unit;
     const building = world.buildingAt(Math.floor(t.x), Math.floor(t.y));
-    return building && !world.isMine(building) ? building : null;
+    return building && world.isEnemy(building) ? building : null;
   }
 
   /** 공격 이동: 적을 찍으면 그 적을 공격, 땅을 찍으면 가며 만나는 적과 싸운다 */
@@ -619,18 +629,21 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
 
   // ---------- HUD ----------
 
+  // 우리 팀을 왼쪽에, 상대 팀을 오른쪽에
   const playerTags = new Map();
   const versus = h('div', { class: 'versus' });
-  players.forEach((player, i) => {
+  [myTeam, 1 - myTeam].forEach((team, i) => {
     if (i > 0) versus.append(h('span', { class: 'vs' }, 'VS'));
-    const tag = h(
-      'span',
-      { class: player.uid === me.uid ? 'player-tag is-me' : 'player-tag' },
-      h('i', { class: 'swatch', style: `--c: ${PLAYER_COLORS[player.slot]}` }),
-      `P${player.slot + 1} ${player.nickname}`,
-    );
-    playerTags.set(player.uid, tag);
-    versus.append(tag);
+    for (const player of players.filter((p) => (p.team ?? p.slot) === team)) {
+      const tag = h(
+        'span',
+        { class: player.uid === me.uid ? 'player-tag is-me' : 'player-tag' },
+        h('i', { class: 'swatch', style: `--c: ${PLAYER_COLORS[player.slot]}` }),
+        `P${player.slot + 1} ${player.nickname}`,
+      );
+      playerTags.set(player.uid, tag);
+      versus.append(tag);
+    }
   });
 
   const resourceValue = () => h('span', { class: 'res-val' }, '—');
@@ -718,13 +731,31 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
     surrenderButton.disabled = true;
 
     recorder?.finish(result);
-    const won = result.winner === mySlot;
+    const won = result.winnerTeam === myTeam;
     const minutes = Math.floor(result.durationSec / 60);
     const seconds = String(result.durationSec % 60).padStart(2, '0');
     resultPanel.replaceChildren(
       h('p', { class: won ? 'result-kicker is-win' : 'result-kicker' }, won ? '승리' : '패배'),
       h('h2', { class: 'result-title' }, won ? '왕관을 지켰습니다' : '왕관을 잃었습니다'),
-      h('p', { class: 'result-reason' }, `${endReason(result.reason, won)} · 경기 시간 ${minutes}분 ${seconds}초`),
+      h('p', { class: 'result-reason' }, `${endReason(result.reason, won, teamGame)} · 경기 시간 ${minutes}분 ${seconds}초`),
+      teamGame
+        ? h(
+            'ul',
+            { class: 'result-teams' },
+            ...[0, 1].map((team) =>
+              h(
+                'li',
+                { class: team === result.winnerTeam ? 'is-winner' : '' },
+                h('strong', {}, team === myTeam ? '우리 팀' : '상대 팀'),
+                ' ',
+                result.players
+                  .filter((p) => p.team === team)
+                  .map((p) => p.nickname)
+                  .join(' · '),
+              ),
+            ),
+          )
+        : null,
       h(
         'div',
         { class: 'result-actions' },
@@ -791,13 +822,19 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
 
     // 왕관 몰락 카운트다운: 내 것이 급하고, 없으면 상대 것을 보여준다
     const mine = world.publicPlayers.get(mySlot);
-    const rival = [...world.publicPlayers.values()].find((p) => p.slot !== mySlot && p.collapseSeconds != null);
+    const others = [...world.publicPlayers.values()].filter((p) => p.slot !== mySlot && p.collapseSeconds != null && !p.defeated);
+    const ally = others.find((p) => p.team === myTeam);
+    const rival = others.find((p) => p.team !== myTeam);
     if (!ended && mine?.collapseSeconds != null) {
       crownBanner.textContent = `왕관 몰락까지 ${mine.collapseSeconds}초 — 영주관을 다시 지으세요`;
       crownBanner.className = 'hud-banner is-danger';
       crownBanner.hidden = false;
+    } else if (!ended && ally) {
+      crownBanner.textContent = `팀원 ${playerName(ally.slot)}의 왕관 몰락까지 ${ally.collapseSeconds}초`;
+      crownBanner.className = 'hud-banner is-danger';
+      crownBanner.hidden = false;
     } else if (!ended && rival) {
-      crownBanner.textContent = `상대 왕관 몰락까지 ${rival.collapseSeconds}초`;
+      crownBanner.textContent = `${teamGame ? `${playerName(rival.slot)}의 ` : '상대 '}왕관 몰락까지 ${rival.collapseSeconds}초`;
       crownBanner.className = 'hud-banner';
       crownBanner.hidden = false;
     } else {

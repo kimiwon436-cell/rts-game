@@ -258,8 +258,8 @@ function showLobby() {
   });
 }
 
-async function createRoom(name) {
-  const res = await request(state.socket, EV.LOBBY_CREATE, { name });
+async function createRoom(name, mode) {
+  const res = await request(state.socket, EV.LOBBY_CREATE, { name, mode });
   if (res.ok) onRoom(res.room);
   else toast(errorMessage(res.error), { error: true });
 }
@@ -274,6 +274,22 @@ async function setReady(ready) {
   const res = await request(state.socket, EV.LOBBY_READY, { ready });
   if (!res.ok) toast(errorMessage(res.error), { error: true });
 }
+
+async function setTeam(team) {
+  const res = await request(state.socket, EV.LOBBY_TEAM, { team });
+  if (!res.ok) toast(errorMessage(res.error), { error: true });
+}
+
+async function changeSettings(settings) {
+  const res = await request(state.socket, EV.LOBBY_SETTINGS, settings);
+  if (!res.ok) {
+    toast(errorMessage(res.error), { error: true });
+    if (state.room && state.view === 'room') state.screen.update(state.room); // 고른 값을 되돌린다
+  }
+}
+
+const roomScreen = () =>
+  createRoomScreen({ me: me(), onReady: setReady, onLeave: leaveRoom, onTeam: setTeam, onSettings: changeSettings });
 
 async function leaveRoom() {
   await request(state.socket, EV.LOBBY_LEAVE);
@@ -291,9 +307,7 @@ function onRoom(room) {
     state.screen.updateRoom(room);
     return;
   }
-  if (state.view !== 'room') {
-    show('room', createRoomScreen({ me: me(), onReady: setReady, onLeave: leaveRoom }));
-  }
+  if (state.view !== 'room') show('room', roomScreen());
   state.screen.update(room);
 }
 
@@ -329,7 +343,7 @@ function returnToRoom() {
     showLobby();
     return;
   }
-  show('room', createRoomScreen({ me: me(), onReady: setReady, onLeave: leaveRoom }));
+  show('room', roomScreen());
   state.screen.update(state.room);
 }
 

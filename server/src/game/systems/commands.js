@@ -139,7 +139,7 @@ function move(world, slot, { unitIds, x, y }, attacking = false) {
 
 function attack(world, slot, { unitIds, targetId }) {
   const target = world.entity(targetId);
-  if (!target || target.owner === slot || target.hp <= 0) return REJECT.INVALID_TARGET;
+  if (!target || !world.areEnemies(target.owner, slot) || target.hp <= 0) return REJECT.INVALID_TARGET;
   const info = UNITS[target.type] ? { def: UNITS[target.type], shieldWall: target.shieldWall } : { building: true, type: target.type };
   const units = ownUnits(world, slot, unitIds).filter((unit) => computeDamage(UNITS[unit.type], info) > 0);
   if (!units.length) return REJECT.CANNOT_ATTACK;

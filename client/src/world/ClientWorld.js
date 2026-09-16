@@ -33,9 +33,15 @@ const MAX_DRIFT = 8; // 이만큼 어긋나면 부드럽게 맞추지 않고 그
  * 좌표는 타일 단위 (서버와 같다).
  */
 export class ClientWorld {
-  constructor(map, mySlot) {
+  /**
+   * @param {object} map
+   * @param {number} mySlot
+   * @param {Array<{ slot: number, team?: number }>} [players] 시작 정보. 스냅샷이 오기 전에도 팀을 알 수 있게 받는다
+   */
+  constructor(map, mySlot, players = []) {
     this.map = map;
     this.mySlot = mySlot;
+    this.startTeams = new Map(players.map((p) => [p.slot, p.team ?? p.slot]));
     this.tiles = new Uint8Array(map.tiles);
     this.units = new Map();
     this.buildings = new Map();
@@ -289,6 +295,25 @@ export class ClientWorld {
 
   isMine(entity) {
     return entity.owner === this.mySlot;
+  }
+
+  teamOf(slot) {
+    return this.publicPlayers.get(slot)?.team ?? this.startTeams.get(slot) ?? slot;
+  }
+
+  /** 다른 팀의 것 (공격 대상) */
+  isEnemy(entity) {
+    return this.teamOf(entity.owner) !== this.teamOf(this.mySlot);
+  }
+
+  /** 같은 팀이지만 내 것은 아닌 것 (팀원) */
+  isAlly(entity) {
+    return entity.owner !== this.mySlot && !this.isEnemy(entity);
+  }
+
+  /** 'mine' | 'ally' | 'enemy' */
+  relationOf(entity) {
+    return this.isMine(entity) ? 'mine' : this.isEnemy(entity) ? 'enemy' : 'ally';
   }
 
   /** 내가 맺은 맹세 (없으면 null) */

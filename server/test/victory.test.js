@@ -41,7 +41,7 @@ test('왕관 몰락 120초가 지나면 패배하고 상대가 이긴다', () =>
   runSeconds(world, 119);
   assert.equal(world.result, null, '120초 전에 끝났다');
   runSeconds(world, 2);
-  assert.equal(world.result?.winner, 0);
+  assert.equal(world.result?.winnerTeam, 0);
   assert.equal(world.result?.reason, VICTORY_REASON.CONQUEST);
   assert.equal(world.players[1].defeated, true);
 });
@@ -49,7 +49,7 @@ test('왕관 몰락 120초가 지나면 패배하고 상대가 이긴다', () =>
 test('항복하면 바로 지고 상대가 이긴다', () => {
   const world = newWorld();
   stepWorld(world, [{ slot: 1, cmd: { seq: 1, type: CMD.SURRENDER, unitIds: [] } }]);
-  assert.equal(world.result?.winner, 0);
+  assert.equal(world.result?.winnerTeam, 0);
   assert.equal(world.result?.reason, VICTORY_REASON.SURRENDER);
 });
 
@@ -59,6 +59,6 @@ test('유닛도 건물도 남지 않으면 카운트다운 없이 바로 진다'
   keepOf(world, 1).hp = 0;
 
   stepWorld(world);
-  assert.equal(world.result?.winner, 0);
+  assert.equal(world.result?.winnerTeam, 0);
   assert.equal(world.result?.reason, VICTORY_REASON.ANNIHILATION);
 });

@@ -36,7 +36,7 @@ const REASON_TEXT = {
 export function createReplayView({ canvas, replay, onExit }) {
   const map = loadMap(replay.mapId);
   const players = replay.players;
-  const world = new ClientWorld(map, replay.mySlot);
+  const world = new ClientWorld(map, replay.mySlot, players);
   const camera = new Camera(map.width * TILE_SIZE, map.height * TILE_SIZE);
   const renderer = new Renderer(canvas, world, camera, players);
   const minimap = new Minimap(world, camera);
@@ -84,11 +84,13 @@ export function createReplayView({ canvas, replay, onExit }) {
   );
   const tags = new Map();
   const versus = h('div', { class: 'versus' });
-  players.forEach((p, i) => {
+  [0, 1].forEach((team, i) => {
     if (i > 0) versus.append(h('span', { class: 'vs' }, 'VS'));
-    const label = h('span', {}, `P${p.slot + 1} ${p.nickname}${p.slot === replay.mySlot ? ' (시점)' : ''}`);
-    tags.set(p.slot, label);
-    versus.append(h('span', { class: 'player-tag' }, h('i', { class: 'swatch', style: `--c: ${PLAYER_COLORS[p.slot]}` }), label));
+    for (const p of players.filter((player) => (player.team ?? player.slot) === team)) {
+      const label = h('span', {}, `P${p.slot + 1} ${p.nickname}${p.slot === replay.mySlot ? ' (시점)' : ''}`);
+      tags.set(p.slot, label);
+      versus.append(h('span', { class: 'player-tag' }, h('i', { class: 'swatch', style: `--c: ${PLAYER_COLORS[p.slot]}` }), label));
+    }
   });
   const closeButton = h('button', { class: 'btn btn-sm', type: 'button', onClick: () => onExit() }, '나가기');
 
@@ -252,8 +254,11 @@ export function createReplayView({ canvas, replay, onExit }) {
     else info.hidden = true;
 
     if (player.ended && replay.result && banner.hidden) {
-      const { winner, reason } = replay.result;
-      showBanner(winner == null ? '경기 종료' : `${nameOf(winner)} 승리 · ${REASON_TEXT[reason] ?? reason}`);
+      const { reason } = replay.result;
+      // 예전 리플레이(1대1)는 winner(슬롯)를, 지금은 winnerTeam을 담는다
+      const winnerTeam = replay.result.winnerTeam ?? (replay.result.winner != null ? world.teamOf(replay.result.winner) : null);
+      const winners = players.filter((p) => (p.team ?? p.slot) === winnerTeam).map((p) => p.nickname).join('·');
+      showBanner(winnerTeam == null ? '경기 종료' : `${winners} 승리 · ${REASON_TEXT[reason] ?? reason}`);
     }
   }
 

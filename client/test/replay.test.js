@@ -70,8 +70,8 @@ test('리플레이 파일은 gzip으로 줄고, 다시 읽으면 그대로다 (u
   const back = await decodeReplay(blob);
   assert.equal(back.snapshots.length, 120);
   assert.deepEqual(back.players, [
-    { nickname: '새벽기사', slot: 0 },
-    { nickname: '폭풍', slot: 1 },
+    { nickname: '새벽기사', slot: 0, team: 0 },
+    { nickname: '폭풍', slot: 1, team: 1 },
   ]);
   assert.equal(back.result.reason, 'surrender');
   assert.match(replayFileName(back), /^rune-\d{4}-\d{2}-\d{2}-\d{4}-새벽기사-vs-폭풍\.rcr$/);

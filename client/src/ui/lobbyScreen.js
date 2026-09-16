@@ -1,5 +1,6 @@
 import { ROOM_NAME_MAX } from '@rune/shared/constants.js';
 import { ROOM_STATUS } from '@rune/shared/protocol.js';
+import { GAME_MODES, MAP_LIST } from '@rune/shared/map/maps/index.js';
 import { h } from './dom.js';
 
 const STATUS_LABEL = {
@@ -20,6 +21,11 @@ export function createLobbyScreen({ me, onCreate, onJoin, onOpenReplay, onSignOu
     maxlength: ROOM_NAME_MAX,
     placeholder: `${me.nickname}의 방`,
   });
+  const modeSelect = h(
+    'select',
+    { class: 'input select', id: 'room-mode', name: 'room-mode' },
+    ...Object.values(GAME_MODES).map((mode) => h('option', { value: mode.id }, mode.name)),
+  );
   const createButton = h('button', { class: 'btn btn-primary', type: 'submit' }, '방 만들기');
   const createForm = h(
     'form',
@@ -29,7 +35,7 @@ export function createLobbyScreen({ me, onCreate, onJoin, onOpenReplay, onSignOu
         event.preventDefault();
         createButton.disabled = true;
         try {
-          await onCreate(nameInput.value);
+          await onCreate(nameInput.value, modeSelect.value);
         } finally {
           createButton.disabled = false;
         }
@@ -37,6 +43,8 @@ export function createLobbyScreen({ me, onCreate, onJoin, onOpenReplay, onSignOu
     },
     h('label', { class: 'label', for: 'room-name' }, '방 이름'),
     nameInput,
+    h('label', { class: 'label', for: 'room-mode' }, '방식'),
+    modeSelect,
     createButton,
     h('p', { class: 'note' }, '방을 만들면 다른 플레이어가 목록에서 입장할 수 있습니다.'),
   );
@@ -103,7 +111,16 @@ export function createLobbyScreen({ me, onCreate, onJoin, onOpenReplay, onSignOu
         return h(
           'li',
           { class: 'room-row' },
-          h('span', { class: 'room-name', title: room.name }, room.name),
+          h(
+            'span',
+            { class: 'room-main' },
+            h('span', { class: 'room-name', title: room.name }, room.name),
+            h(
+              'span',
+              { class: 'room-meta' },
+              `${GAME_MODES[room.mode]?.name ?? room.mode} · ${MAP_LIST.find((m) => m.id === room.mapId)?.name ?? room.mapId}`,
+            ),
+          ),
           h('span', { class: 'room-count' }, `${room.players}/${room.maxPlayers}`),
           joinable
             ? h('button', { class: 'btn btn-sm', type: 'button', onClick: () => onJoin(room.id) }, '입장')

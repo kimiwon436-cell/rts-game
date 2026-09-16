@@ -36,7 +36,7 @@ export function createRecorder({ mapId, players, mySlot }) {
         recordedAt: Date.now(),
         mapId,
         mySlot,
-        players: players.map(({ nickname, slot }) => ({ nickname, slot })),
+        players: players.map(({ nickname, slot, team }) => ({ nickname, slot, team: team ?? slot })),
         result,
         snapshots,
       };

@@ -5,10 +5,12 @@ export const EV = Object.freeze({
   NET_PING: 'net:ping',
   PROFILE_CREATE: 'profile:create', // { nickname } — 가입 직후 한 번
   LOBBY_LIST: 'lobby:list',
-  LOBBY_CREATE: 'lobby:create', // { name }
+  LOBBY_CREATE: 'lobby:create', // { name, mode: '1v1' | '2v2' | '3v3' }
   LOBBY_JOIN: 'lobby:join', // { roomId }
   LOBBY_LEAVE: 'lobby:leave',
   LOBBY_READY: 'lobby:ready', // { ready }
+  LOBBY_TEAM: 'lobby:team', // { team: 0 | 1 }
+  LOBBY_SETTINGS: 'lobby:settings', // { mode?, mapId? } — 방장만
   GAME_CMD: 'game:cmd', // { seq, type, ... } — 응답 없음. 거부되면 GAME_REJECT
 
   // 서버 → 클라이언트
@@ -16,10 +18,10 @@ export const EV = Object.freeze({
   LOBBY_UPDATE: 'lobby:update', // RoomSummary[]
   LOBBY_ROOM: 'lobby:room', // RoomDetail | null
   GAME_COUNTDOWN: 'game:countdown', // { seconds } — seconds가 0이면 취소
-  GAME_START: 'game:start', // { roomId, mapId, players }
+  GAME_START: 'game:start', // { roomId, mapId, mode, ranked, players: [{ uid, nickname, slot, team }] }
   GAME_SNAP: 'game:snap', // 틱마다 보내는 상태 (shared/src/snapshot.js)
   GAME_REJECT: 'game:reject', // { seq, reason }
-  GAME_END: 'game:end', // { winner, reason, durationSec, players }
+  GAME_END: 'game:end', // { winnerTeam, reason, durationSec, mode, ranked, players, ratings? }
   GAME_RESUME: 'game:resume', // 끊겼다 돌아온 플레이어에게: { roomId, mapId, players }
   SESSION_REPLACED: 'session:replaced',
 });
@@ -31,6 +33,9 @@ export const ERR = Object.freeze({
   ROOM_FULL: 'ROOM_FULL',
   ROOM_NOT_WAITING: 'ROOM_NOT_WAITING',
   NOT_IN_ROOM: 'NOT_IN_ROOM',
+  NOT_HOST: 'NOT_HOST',
+  TEAM_FULL: 'TEAM_FULL',
+  INVALID_SETTINGS: 'INVALID_SETTINGS',
   NO_PROFILE: 'NO_PROFILE', // 닉네임을 정하기 전에는 로비를 쓸 수 없다
   PROFILE_EXISTS: 'PROFILE_EXISTS',
   NICKNAME_INVALID: 'NICKNAME_INVALID', // 자세한 이유는 응답의 reason

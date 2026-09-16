@@ -107,10 +107,12 @@ export function createDuel01() {
   return {
     id: 'duel01',
     name: '갈라진 레이 라인',
+    description: '호수와 숲 사이로 길이 여럿 난 기본 1대1 맵. 가운데 태초의 샘이 있다.',
+    teamSize: 1,
     width: SIZE,
     height: SIZE,
     tiles,
-    starts: [p1Keep, mirrorRect(p1Keep)].map((keep, slot) => ({ slot, keep })),
+    starts: [p1Keep, mirrorRect(p1Keep)].map((keep, slot) => ({ slot, team: slot, keep })),
     goldMines: goldMines.map((g, i) => ({ id: `gold${i}`, ...g })),
     wells: wells.map((w, i) => ({ id: `well${i}`, ...w, rate: w.kind === 'primordial' ? 4 : 1.5 })),
   };

@@ -624,3 +624,24 @@ button, .rp-seek { touch-action: manipulation; }
 .screen-title { margin: 0; font-family: var(--f-display); font-weight: 700; font-size: 24px; }
 .status-card { gap: 14px; }
 .status-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+
+/* ---------- 팀·방 설정 ---------- */
+.select { appearance: auto; padding: 8px 10px; }
+.room { width: min(720px, 100%); }
+.room-settings { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 16px; }
+.setting { display: grid; gap: 4px; min-width: 150px; }
+.setting-chip { padding: 3px 12px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 13px; color: var(--text-soft); }
+.teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 560px) { .teams { grid-template-columns: minmax(0, 1fr); } }
+.team { display: grid; gap: 8px; align-content: start; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--team-color); border-radius: 6px; }
+.team-head { display: flex; align-items: center; gap: 8px; }
+.team-name { font-family: var(--f-display); font-weight: 700; font-size: 17px; color: var(--team-color); }
+.team-count { font-size: 13px; color: var(--text-soft); }
+.team-head .btn { margin-left: auto; }
+.team-slots { display: grid; gap: 8px; }
+.team .slot { min-height: 72px; padding: 10px 12px; border-top-width: 1px; background: var(--panel-2); }
+.slot.is-empty .slot-name { color: var(--text-faint); font-weight: 500; font-size: 15px; }
+.room-main { display: grid; min-width: 0; }
+.room-meta { font-size: 12px; color: var(--text-faint); }
+.result-teams { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13.5px; color: var(--text-soft); }
+.result-teams li.is-winner strong { color: var(--gold); }

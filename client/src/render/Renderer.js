@@ -248,17 +248,18 @@ export class Renderer {
       if (unit) {
         const x = unit.drawX * S;
         const y = unit.drawY * S;
-        const mine = this.world.isMine(unit);
+        const relation = this.world.relationOf(unit);
         const radius = UNITS[unit.type].radius * S;
-        drawSelectionRing(ctx, x, y + 7, radius + 2, mine);
+        drawSelectionRing(ctx, x, y + 7, radius + 2, relation);
         drawHealthBar(ctx, x, y - 26, Math.max(20, radius * 2), unit.hp / UNITS[unit.type].hp);
         continue;
       }
 
       const b = this.world.buildings.get(id);
       if (b) {
-        const mine = this.world.isMine(b);
-        ctx.strokeStyle = mine ? 'rgba(120, 230, 140, 0.95)' : 'rgba(240, 120, 110, 0.95)';
+        const relation = this.world.relationOf(b);
+        const mine = relation === 'mine';
+        ctx.strokeStyle = { mine: 'rgba(120, 230, 140, 0.95)', ally: 'rgba(240, 205, 100, 0.95)', enemy: 'rgba(240, 120, 110, 0.95)' }[relation];
         ctx.lineWidth = 2;
         ctx.strokeRect(b.x * S + 1, b.y * S + 1, b.size * S - 2, b.size * S - 2);
         drawHealthBar(ctx, (b.x + b.size / 2) * S, b.y * S + b.size * S + 4, b.size * S * 0.6, b.hp / BUILDINGS[b.type].hp);
