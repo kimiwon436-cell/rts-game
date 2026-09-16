@@ -13,6 +13,7 @@ import { h } from '../ui/dom.js';
 import { toast } from '../ui/toast.js';
 import { errorMessage } from '../ui/messages.js';
 import { createCommandCard } from '../ui/commandCard.js';
+import { createChatBox } from '../ui/chatBox.js';
 import { ClientWorld } from '../world/ClientWorld.js';
 import { Camera } from '../render/Camera.js';
 import { Renderer } from '../render/Renderer.js';
@@ -46,7 +47,19 @@ function endReason(reason, won, team) {
  * 게임 화면: 스냅샷을 받아 그리고, 선택·우클릭 명령·건물 배치를 서버에 보낸다.
  * 규칙 판정은 서버가 한다. 클라이언트의 배치 판정은 미리보기용이다.
  */
-export function createGameView({ canvas, socket, mapId, players, me, recorder, ranked = false, onLeave, onReturnToRoom }) {
+export function createGameView({
+  canvas,
+  socket,
+  mapId,
+  players,
+  me,
+  recorder,
+  ranked = false,
+  chatMessages = [],
+  onSendChat = async () => {},
+  onLeave,
+  onReturnToRoom,
+}) {
   const map = loadMap(mapId);
   const mySlot = players.find((p) => p.uid === me.uid)?.slot ?? 0;
 
@@ -616,6 +629,12 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, r
   }
 
   input.handlers.key = (event) => {
+    // Enter: 채팅 입력 (경기가 끝난 뒤에도 인사할 수 있게 ended보다 먼저)
+    if (event.code === 'Enter' || event.code === 'NumpadEnter' || event.key === 'Enter') {
+      event.preventDefault();
+      chat.open();
+      return;
+    }
     if (ended) return;
     if (event.code === 'Escape') {
       if (casting) casting = null;
@@ -695,11 +714,13 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, r
 
   // 터치 화면용 도구: Esc·드래그 선택을 대신한다
   const cancelModeButton = h('button', { class: 'touch-btn is-cancel', type: 'button', hidden: true, onClick: () => cancelMode() }, '취소');
+  const chat = createChatBox({ messages: chatMessages, teamGame, variant: 'overlay', onSend: onSendChat });
   const touchTools = touchMode
     ? h(
         'div',
         { class: 'touch-tools', role: 'group', 'aria-label': '빠른 선택' },
         cancelModeButton,
+        h('button', { class: 'touch-btn', type: 'button', onClick: () => chat.open() }, '채팅'),
         h('button', { class: 'touch-btn', type: 'button', onClick: () => selectArmy() }, '병력 전체'),
         h('button', { class: 'touch-btn', type: 'button', onClick: () => selectIdleWorkers() }, '쉬는 농노'),
       )
@@ -791,6 +812,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, r
     ),
     h('div', { class: 'hud-banners' }, crownBanner, netBanner, banner),
     h('div', { class: 'hud-minimap' }, minimap.canvas),
+    h('div', { class: 'hud-chat' }, chat.el),
     touchTools,
     touchMode ? h('p', { class: 'rotate-hint' }, '가로로 돌리면 더 넓게 볼 수 있습니다') : null,
     commandCard.el,
@@ -931,6 +953,8 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, r
     el,
     updateRoom,
     setRankedResult,
+    addChatMessage: (message) => chat.add(message),
+    resetChat: (messages) => chat.reset(messages),
     setPing: (ms) => {
       ping.textContent = `${ms} ms`;
     },
@@ -944,6 +968,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, r
       socket.off('connect', onOnline);
       input.destroy();
       touch.destroy();
+      chat.destroy();
       canvas.hidden = true;
     },
   };

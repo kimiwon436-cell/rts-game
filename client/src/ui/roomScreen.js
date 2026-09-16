@@ -1,6 +1,7 @@
 import { PLAYER_COLORS } from '@rune/shared/constants.js';
 import { GAME_MODES, MAP_LIST, mapsForMode } from '@rune/shared/map/maps/index.js';
 import { h } from './dom.js';
+import { createChatBox } from './chatBox.js';
 
 export const TEAM_NAMES = ['1팀', '2팀'];
 /** 팀 색: 팀 0은 따뜻한 색(슬롯 0), 팀 1은 차가운 색(슬롯 1) */
@@ -12,9 +13,12 @@ const mapName = (mapId) => MAP_LIST.find((m) => m.id === mapId)?.name ?? mapId;
  * 대기실: 경기 방식·맵(방장만 바꾼다), 팀 두 줄, 준비.
  * 팀 인원이 모두 차고 모두 준비하면 서버가 카운트다운을 시작한다.
  */
-export function createRoomScreen({ me, onReady, onLeave, onTeam, onSettings }) {
+export function createRoomScreen({ me, onReady, onLeave, onTeam, onSettings, getChatMessages = () => [], onSendChat }) {
   let myReady = false;
   let countdownTimer = null;
+  let chat = null; // 팀전인지에 따라 전체·팀 버튼이 달라서 방 정보를 받은 뒤 만든다
+  let chatTeamGame = null;
+  const chatSlot = h('div', { class: 'room-chat' });
 
   const title = h('h1', { class: 'room-title' });
   const hint = h('p', { class: 'note' });
@@ -34,6 +38,7 @@ export function createRoomScreen({ me, onReady, onLeave, onTeam, onSettings }) {
       settings,
       teams,
       countdown,
+      chatSlot,
       h('div', { class: 'room-actions' }, leaveButton, readyButton),
     ),
   );
@@ -124,6 +129,13 @@ export function createRoomScreen({ me, onReady, onLeave, onTeam, onSettings }) {
   }
 
   function update(room) {
+    const teamGame = room.mode !== '1v1';
+    if (chatTeamGame !== teamGame) {
+      chat?.destroy();
+      chat = createChatBox({ messages: getChatMessages(), teamGame, variant: 'panel', onSend: onSendChat });
+      chatTeamGame = teamGame;
+      chatSlot.replaceChildren(chat.el);
+    }
     title.textContent = room.name;
     renderSettings(room);
     renderTeams(room);
@@ -162,6 +174,11 @@ export function createRoomScreen({ me, onReady, onLeave, onTeam, onSettings }) {
     el,
     update,
     setCountdown,
-    destroy: () => clearInterval(countdownTimer),
+    addChatMessage: (message) => chat?.add(message),
+    resetChat: (messages) => chat?.reset(messages),
+    destroy: () => {
+      clearInterval(countdownTimer);
+      chat?.destroy();
+    },
   };
 }

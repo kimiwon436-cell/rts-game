@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { EV, ERR, ROOM_STATUS } from '@rune/shared/protocol.js';
 import { ROOM_NAME_MAX, START_COUNTDOWN_SEC } from '@rune/shared/constants.js';
 import { GAME_MODES, MAP_LIST, defaultMapFor } from '@rune/shared/map/maps/index.js';
@@ -23,19 +24,20 @@ export const publicProfile = (p) =>
  * 한 uid는 동시에 소켓 하나, 방 하나에만 속한다.
  * 경기 중에 연결이 끊기면 유예 시간 동안 자리를 지켜 주고, 그 안에 돌아오면 이어서 한다.
  */
-export class Lobby {
-  constructor(
-    io,
-    { countdownSec = START_COUNTDOWN_SEC, reconnectGraceSec = 60, profiles = new MemoryProfileStore(), onMatchEnd = null } = {},
-  ) {
+/**
+ * 로비가 내는 이벤트 (매칭·채팅이 듣는다)
+ * - socketReady (socket)             로비 이벤트가 열린 소켓
+ * - enterRoom (uid)                  방에 들어간다 (대기열에서 빼야 한다)
+ * - playerJoined (room, player, socket) / playerLeft (room, player) / playerRejoined (room, socket)
+ * - rankedAbort (room, uids)         시작 전에 랭킹전 방이 깨졌다
+ * - matchEnd (room, result, record)  경기가 끝났다
+ * - roomClosed (room)
+ */
+export class Lobby extends EventEmitter {
+  constructor(io, { countdownSec = START_COUNTDOWN_SEC, reconnectGraceSec = 60, profiles = new MemoryProfileStore() } = {}) {
+    super();
     this.io = io;
     this.profiles = profiles;
-    /** 경기가 끝날 때 (room, result, record) — 랭킹전 레이팅 계산에 쓴다 */
-    this.onMatchEnd = onMatchEnd;
-    /** 매칭(Matchmaker)이 거는 고리들 */
-    this.onSocketReady = null; // (socket) 로비 이벤트가 열린 소켓
-    this.onEnterRoom = null; // (uid) 방에 들어간다 — 대기열에서 빼야 한다
-    this.onRankedAbort = null; // (room, uids) 시작 전에 랭킹전 방이 깨졌다 — 남은 사람을 다시 줄 세운다
     this.countdownSec = countdownSec;
     this.reconnectGraceSec = reconnectGraceSec;
     this.rooms = new Map(); // roomId → room
@@ -122,7 +124,7 @@ export class Lobby {
     this.bind(socket, EV.LOBBY_READY, (body) => this.setReady(socket, body));
     this.bind(socket, EV.LOBBY_TEAM, (body) => this.setTeam(socket, body));
     this.bind(socket, EV.LOBBY_SETTINGS, (body) => this.setSettings(socket, body));
-    this.onSocketReady?.(socket);
+    this.emit('socketReady', socket);
 
     // 게임 명령은 응답 없이 경기로 넘긴다. 거부되면 경기가 GAME_REJECT를 보낸다.
     socket.on(EV.GAME_CMD, (cmd) => {
@@ -153,6 +155,7 @@ export class Lobby {
     }
     socket.emit(EV.LOBBY_ROOM, this.detail(room));
     this.broadcastRoom(room);
+    this.emit('playerRejoined', room, socket, player);
   }
 
   /** 연결이 끊겼다: 경기 중이면 유예 시간 동안 기다리고, 아니면 바로 방에서 뺀다 */
@@ -172,6 +175,7 @@ export class Lobby {
     player.graceTimer.unref?.();
     console.log('[연결 끊김]', room.id, uid, this.reconnectGraceSec + '초 기다립니다');
     this.broadcastRoom(room);
+    this.emit('playerDisconnected', room, player);
   }
 
   /** 유예 시간이 끝났다: 돌아오지 않은 플레이어는 패배하고 방에서 빠진다 */
@@ -185,10 +189,12 @@ export class Lobby {
     this.roomOfUid.delete(uid);
     room.players = room.players.filter((p) => p.uid !== uid);
     room.match?.removePlayer(uid);
+    this.emit('playerLeft', room, player);
 
     if (room.players.length === 0) {
       room.match?.stop();
       this.rooms.delete(room.id);
+      this.emit('roomClosed', room);
     } else {
       if (room.hostUid === uid) room.hostUid = room.players[0].uid;
       this.broadcastRoom(room);
@@ -202,7 +208,7 @@ export class Lobby {
   create(socket, { name, mode }) {
     const { uid, nickname } = socket.data;
     const gameMode = GAME_MODES[mode] ? mode : '1v1';
-    this.onEnterRoom?.(uid);
+    this.emit('enterRoom', uid);
     this.removeFromRoom(socket);
 
     const room = {
@@ -234,7 +240,7 @@ export class Lobby {
     if (room.ranked || room.status !== ROOM_STATUS.WAITING) return fail(ERR.ROOM_NOT_WAITING);
     if (room.players.length >= maxPlayersOf(room)) return fail(ERR.ROOM_FULL);
 
-    this.onEnterRoom?.(uid);
+    this.emit('enterRoom', uid);
     this.removeFromRoom(socket);
     const [team0, team1] = teamCounts(room);
     this.addPlayer(room, socket, team1 < team0 ? 1 : 0); // 사람이 적은 팀으로
@@ -343,6 +349,7 @@ export class Lobby {
     socket.join(channelOf(room.id));
     this.broadcastRoom(room);
     this.broadcastList();
+    this.emit('playerJoined', room, room.players[room.players.length - 1], socket);
   }
 
   removeFromRoom(socket) {
@@ -360,12 +367,13 @@ export class Lobby {
     clearTimeout(leaving?.graceTimer);
     room.players = room.players.filter((p) => p.uid !== uid);
     room.match?.removePlayer(uid);
+    if (leaving) this.emit('playerLeft', room, leaving);
     if (room.status === ROOM_STATUS.STARTING) this.cancelCountdown(room);
 
     // 랭킹전은 시작 전에 한 명이라도 나가면 깨진다. 남은 사람은 다시 매칭을 기다린다
     if (room.ranked && !room.match) {
       this.disband(room);
-      this.onRankedAbort?.(room, room.players.map((p) => p.uid));
+      this.emit('rankedAbort', room, room.players.map((p) => p.uid));
       this.broadcastList();
       return;
     }
@@ -373,6 +381,7 @@ export class Lobby {
     if (room.players.length === 0) {
       room.match?.stop();
       this.rooms.delete(room.id);
+      this.emit('roomClosed', room);
       console.log('[방 삭제]', room.id);
     } else {
       if (room.hostUid === uid) room.hostUid = room.players[0].uid;
@@ -448,6 +457,7 @@ export class Lobby {
     room.match.start();
     this.broadcastRoom(room);
     this.broadcastList();
+    this.emit('matchStart', room);
     const teams = [0, 1].map((team) => payload.players.filter((p) => p.team === team).map((p) => p.nickname).join('·'));
     console.log('[게임 시작]', room.id, room.mode, room.mapId, teams.join(' vs '));
   }
@@ -471,7 +481,7 @@ export class Lobby {
     const winners = result.players.filter((p) => p.team === result.winnerTeam).map((p) => p.nickname);
     console.log('[게임 종료]', room.id, '승리=' + (winners.join('·') || '없음'), result.reason, result.durationSec + '초');
     if (record) saveMatchResult(record).catch((err) => console.error('전적 저장 실패', err));
-    this.onMatchEnd?.(room, result, record);
+    this.emit('matchEnd', room, result, record);
 
     // 랭킹전은 같은 방에서 재대결하지 않는다: 방을 닫고 모두 로비로
     if (room.ranked) {
@@ -490,6 +500,7 @@ export class Lobby {
   disband(room) {
     clearTimeout(room.countdownTimer);
     this.rooms.delete(room.id);
+    this.emit('roomClosed', room);
     for (const player of room.players) {
       clearTimeout(player.graceTimer);
       this.roomOfUid.delete(player.uid);

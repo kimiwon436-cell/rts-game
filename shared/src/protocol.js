@@ -14,6 +14,7 @@ export const EV = Object.freeze({
   RANKED_JOIN: 'ranked:join', // { mode } — 랭킹전 매칭 대기열에 들어간다
   RANKED_LEAVE: 'ranked:leave',
   RANKED_LEADERBOARD: 'ranked:leaderboard', // { mode } → { entries, me }
+  CHAT_SEND: 'chat:send', // { text, scope: 'all' | 'team' } — 방(대기실·경기) 안에서만
   GAME_CMD: 'game:cmd', // { seq, type, ... } — 응답 없음. 거부되면 GAME_REJECT
 
   // 서버 → 클라이언트
@@ -30,6 +31,8 @@ export const EV = Object.freeze({
   RANKED_STATUS: 'ranked:status', // { mode, waitingSec, queueSize } | null (대기열에서 나왔다)
   RANKED_FOUND: 'ranked:found', // { mode, mapId } — 곧 LOBBY_ROOM·GAME_COUNTDOWN이 온다
   RANKED_RESULT: 'ranked:result', // { mode, changes: [{ nickname, team, before, after, delta, won }] }
+  CHAT_MESSAGE: 'chat:message', // { id, scope, text, at, from: { nickname, team, slot } | null(안내) }
+  CHAT_HISTORY: 'chat:history', // { roomId, messages } — 방에 들어오거나 다시 접속했을 때
 });
 
 export const ERR = Object.freeze({
@@ -42,6 +45,8 @@ export const ERR = Object.freeze({
   NOT_HOST: 'NOT_HOST',
   IN_ROOM: 'IN_ROOM', // 방에 있는 동안은 매칭을 시작할 수 없다
   MATCH_CANCELLED: 'MATCH_CANCELLED', // 시작 전에 누가 나가 매칭이 취소됐다 (다시 대기열로)
+  CHAT_RATE_LIMITED: 'CHAT_RATE_LIMITED',
+  CHAT_EMPTY: 'CHAT_EMPTY',
   TEAM_FULL: 'TEAM_FULL',
   INVALID_SETTINGS: 'INVALID_SETTINGS',
   NO_PROFILE: 'NO_PROFILE', // 닉네임을 정하기 전에는 로비를 쓸 수 없다

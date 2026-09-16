@@ -26,12 +26,12 @@ export class Matchmaker {
     this.lastStatusAt = 0;
     this.leaderboards = new Map(); // mode → { at, entries }
 
-    lobby.onSocketReady = (socket) => this.attach(socket);
-    lobby.onEnterRoom = (uid) => this.leave(uid); // 방에 들어가면 대기열에서 뺀다
-    lobby.onRankedAbort = (room, uids) => this.requeue(room, uids);
-    lobby.onMatchEnd = (room, result, record) => {
+    lobby.on('socketReady', (socket) => this.attach(socket));
+    lobby.on('enterRoom', (uid) => this.leave(uid)); // 방에 들어가면 대기열에서 뺀다
+    lobby.on('rankedAbort', (room, uids) => this.requeue(room, uids));
+    lobby.on('matchEnd', (room, result, record) => {
       if (room.ranked) this.settle(room, result, record).catch((err) => console.error('[레이팅 저장 실패]', err));
-    };
+    });
 
     this.timer = setInterval(() => this.tick(), intervalMs);
     this.timer.unref?.();

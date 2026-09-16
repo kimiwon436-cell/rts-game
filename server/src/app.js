@@ -4,6 +4,7 @@ import { NICKNAME_ERROR, validateNickname } from '@rune/shared/rules/nickname.js
 import { createAuthMiddleware } from './net/auth.js';
 import { Lobby } from './net/lobby.js';
 import { Matchmaker } from './net/matchmaking.js';
+import { Chat } from './net/chat.js';
 import { MemoryProfileStore } from './persistence/profiles.js';
 
 function sendJson(res, status, body, headers = {}) {
@@ -66,6 +67,7 @@ export function createGameServer({
 
   const lobby = new Lobby(io, { countdownSec, reconnectGraceSec, profiles });
   const matchmaker = new Matchmaker({ lobby, profiles, intervalMs: matchIntervalMs, random });
+  const chat = new Chat({ lobby });
   io.on('connection', (socket) => {
     console.log(`[접속] uid=${socket.data.uid} 닉네임=${socket.data.nickname ?? '(아직 없음)'}`);
     lobby.attach(socket);
@@ -78,5 +80,5 @@ export function createGameServer({
       io.close(() => resolve());
     });
 
-  return { httpServer, io, lobby, matchmaker, profiles, close };
+  return { httpServer, io, lobby, matchmaker, chat, profiles, close };
 }

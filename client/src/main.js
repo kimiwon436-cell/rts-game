@@ -32,6 +32,7 @@ const state = {
   recorder: null, // 지금 경기의 리플레이 녹화 (재접속해도 이어서 쌓는다)
   ranked: null, // 랭킹전 대기 상태 { mode, waitingSec, queueSize }
   gameEnded: false, // 결과 화면을 보고 있는 중 (방이 닫혀도 로비로 끌어내지 않는다)
+  chat: { roomId: null, messages: [] }, // 지금 방의 채팅 (대기실에서 경기로 넘어가도 이어진다)
   view: null, // 'loading' | 'auth' | 'nickname' | 'lobby' | 'room' | 'game' | 'replay' | 'status'
   screen: null,
 };
@@ -183,6 +184,15 @@ function openSocket() {
   socket.on(EV.GAME_END, () => {
     state.gameEnded = true;
   });
+  socket.on(EV.CHAT_HISTORY, ({ roomId, messages }) => {
+    state.chat = { roomId, messages: [...messages] };
+    state.screen?.resetChat?.(state.chat.messages);
+  });
+  socket.on(EV.CHAT_MESSAGE, (message) => {
+    state.chat.messages.push(message);
+    if (state.chat.messages.length > 100) state.chat.messages.shift();
+    state.screen?.addChatMessage?.(message);
+  });
   socket.on(EV.LOBBY_UPDATE, (rooms) => {
     state.rooms = rooms;
     if (state.view === 'lobby') state.screen.setRooms(rooms);
@@ -315,8 +325,21 @@ async function changeSettings(settings) {
   }
 }
 
+async function sendChat(text, scope) {
+  const res = await request(state.socket, EV.CHAT_SEND, { text, scope });
+  if (!res.ok) toast(errorMessage(res.error), { error: true });
+}
+
 const roomScreen = () =>
-  createRoomScreen({ me: me(), onReady: setReady, onLeave: leaveRoom, onTeam: setTeam, onSettings: changeSettings });
+  createRoomScreen({
+    me: me(),
+    onReady: setReady,
+    onLeave: leaveRoom,
+    onTeam: setTeam,
+    onSettings: changeSettings,
+    getChatMessages: () => state.chat.messages,
+    onSendChat: sendChat,
+  });
 
 async function leaveRoom() {
   await request(state.socket, EV.LOBBY_LEAVE);
@@ -326,6 +349,7 @@ async function leaveRoom() {
 /** 서버가 알려준 내 방 상태를 화면에 반영한다. room이 null이면 방에서 나온 것이다. */
 function onRoom(room) {
   state.room = room;
+  if (room && state.chat.roomId !== room.id) state.chat = { roomId: room.id, messages: [] };
   if (!room) {
     if (state.view === 'game' && state.gameEnded) return; // 결과 화면은 그대로 (랭킹전은 끝나면 방이 닫힌다)
     if (state.view === 'room' || state.view === 'game') showLobby();
@@ -361,6 +385,8 @@ function startGame({ roomId, mapId, players, ranked = false }, { resume = false 
       me: me(),
       recorder: state.recorder,
       ranked,
+      chatMessages: state.chat.messages,
+      onSendChat: sendChat,
       roomName: state.room?.name ?? '',
       onLeave: leaveRoom,
       onReturnToRoom: returnToRoom,
