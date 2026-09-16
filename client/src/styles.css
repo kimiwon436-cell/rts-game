@@ -284,7 +284,7 @@ button, input { font: inherit; color: inherit; }
 .meter-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: #3f8a58; }
 .meter-fill.is-progress { background: #a27a28; }
 .meter-text { position: relative; display: block; font-family: var(--f-mono); font-size: 10.5px; line-height: 12px; text-align: center; color: #f2eee4; }
-.cc-grid { display: grid; grid-template-columns: repeat(4, 66px); grid-auto-rows: 58px; gap: 6px; align-content: start; }
+.cc-grid { display: grid; grid-template-columns: repeat(4, 66px); grid-auto-rows: minmax(58px, auto); gap: 6px; align-content: start; }
 .cc-btn {
   position: relative;
   display: flex;
@@ -292,7 +292,7 @@ button, input { font: inherit; color: inherit; }
   justify-content: flex-end;
   align-items: flex-start;
   gap: 2px;
-  padding: 4px 5px;
+  padding: 15px 5px 4px; /* 위쪽은 단축키 글자 자리 */
   overflow: hidden;
   background: var(--panel-2);
   border: 1px solid var(--line-strong);
@@ -304,8 +304,10 @@ button, input { font: inherit; color: inherit; }
 .cc-btn:disabled { opacity: 0.45; cursor: default; }
 .cc-key { position: absolute; top: 2px; right: 5px; font-family: var(--f-mono); font-size: 10px; color: var(--gold); }
 .cc-label { font-size: 11.5px; font-weight: 600; line-height: 1.2; word-break: keep-all; }
-.cc-cost, .cc-note { font-size: 10px; line-height: 1.2; white-space: nowrap; color: var(--text-soft); }
-.cc-cost { display: flex; gap: 5px; font-family: var(--f-mono); }
+/* 자원 3종 비용(예: 800 300 400)은 한 줄에 안 들어가므로 버튼 안에서 줄을 바꾸고, 버튼이 그만큼 커진다 */
+.cc-cost, .cc-note { font-size: 10px; line-height: 1.25; color: var(--text-soft); }
+.cc-cost { display: flex; flex-wrap: wrap; column-gap: 4px; row-gap: 0; font-family: var(--f-mono); white-space: nowrap; }
+.cc-note { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; word-break: keep-all; }
 .c-gold { color: var(--gold); }
 .c-wood { color: #c69157; }
 .c-mana { color: #8fb6ff; }
@@ -497,7 +499,8 @@ button, .rp-seek { touch-action: manipulation; }
 
 /* 손가락: 단축키 글자를 숨기고 누를 곳을 키운다 */
 .hud.is-touch .cc-key { display: none; }
-.hud.is-touch .cc-grid { grid-template-columns: repeat(4, 70px); grid-auto-rows: 60px; }
+.hud.is-touch .cc-btn { padding-top: 6px; }
+.hud.is-touch .cc-grid { grid-template-columns: repeat(4, 70px); grid-auto-rows: minmax(60px, auto); }
 .hud.is-touch .cc-queue-item { padding: 4px 9px; font-size: 12px; }
 .hud.is-touch .hud-info { display: none; }
 
@@ -525,7 +528,7 @@ button, .rp-seek { touch-action: manipulation; }
     padding: 8px;
   }
   .cc-grid,
-  .hud.is-touch .cc-grid { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); grid-auto-rows: 54px; }
+  .hud.is-touch .cc-grid { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); grid-auto-rows: minmax(54px, auto); }
   .cc-hint { display: none; }
   .touch-tools { top: auto; right: auto; left: max(8px, env(safe-area-inset-left)); bottom: 136px; grid-auto-flow: column; }
   .touch-btn { min-width: 0; min-height: 36px; padding: 4px 10px; font-size: 12px; }
@@ -561,7 +564,7 @@ button, .rp-seek { touch-action: manipulation; }
     padding: 8px;
   }
   .cc-grid,
-  .hud.is-touch .cc-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); grid-auto-rows: 56px; }
+  .hud.is-touch .cc-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); grid-auto-rows: minmax(56px, auto); }
   .touch-tools { top: 64px; }
   .hud.is-touch .rotate-hint {
     display: block;
