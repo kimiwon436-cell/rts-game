@@ -12,6 +12,7 @@ import { Camera } from '../render/Camera.js';
 import { Renderer } from '../render/Renderer.js';
 import { Minimap } from '../render/minimap.js';
 import { Input } from '../input/Input.js';
+import { TouchControls, isCoarsePointer } from '../input/TouchControls.js';
 import { REPLAY_SPEEDS, ReplayPlayer } from './ReplayPlayer.js';
 
 const PAN_SPEED = 1100;
@@ -156,7 +157,7 @@ export function createReplayView({ canvas, replay, onExit }) {
 
   const el = h(
     'div',
-    { class: 'hud is-replay' },
+    { class: isCoarsePointer() ? 'hud is-replay is-touch' : 'hud is-replay' },
     h('header', { class: 'hud-top' }, resources, versus, h('div', { class: 'hud-right' }, closeButton)),
     h('div', { class: 'hud-banners' }, banner),
     h('div', { class: 'hud-minimap' }, minimap.canvas),
@@ -166,8 +167,7 @@ export function createReplayView({ canvas, replay, onExit }) {
 
   // ---------- 입력: 살펴보기와 카메라 ----------
 
-  input.handlers.down = (button, x, y) => {
-    if (button !== 0) return;
+  const inspectAt = (x, y) => {
     const w = camera.screenToWorld(x, y);
     const tx = w.x / TILE_SIZE;
     const ty = w.y / TILE_SIZE;
@@ -177,6 +177,14 @@ export function createReplayView({ canvas, replay, onExit }) {
     if (unit) selection.add(unit.id);
     else if (building) selection.add(building.id);
   };
+  input.handlers.down = (button, x, y) => {
+    if (button === 0) inspectAt(x, y);
+  };
+  const touch = new TouchControls(canvas, {
+    onTap: inspectAt,
+    onPan: (dx, dy) => camera.pan(-dx, -dy),
+    onZoom: (direction, x, y) => camera.zoomAt(direction, x, y),
+  });
   input.handlers.key = (event) => {
     if (event.code === 'Space') {
       event.preventDefault();
@@ -306,6 +314,7 @@ export function createReplayView({ canvas, replay, onExit }) {
       clearTimeout(bannerTimer);
       window.removeEventListener('resize', onResize);
       input.destroy();
+      touch.destroy();
       canvas.hidden = true;
     },
   };

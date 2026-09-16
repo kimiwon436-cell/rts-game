@@ -244,6 +244,7 @@ export class Renderer {
       }
 
       const unit = this.world.units.get(id);
+      if (unit?.carried) continue;
       if (unit) {
         const x = unit.drawX * S;
         const y = unit.drawY * S;

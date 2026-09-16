@@ -459,3 +459,124 @@ button, input { font: inherit; color: inherit; }
   .hud.is-replay .hud-minimap { bottom: 112px; }
   .replay-info { bottom: 112px; }
 }
+
+/* ---------- 터치·작은 화면 ---------- */
+html, body { overscroll-behavior: none; }
+#game { touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.hud { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+button, .rp-seek { touch-action: manipulation; }
+
+/* 노치·홈 표시줄을 피한다 */
+.hud-top {
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+}
+.hud-minimap { left: max(12px, env(safe-area-inset-left)); bottom: max(12px, env(safe-area-inset-bottom)); }
+
+.touch-tools {
+  position: absolute;
+  top: 56px;
+  right: max(12px, env(safe-area-inset-right));
+  display: grid;
+  gap: 6px;
+  pointer-events: auto;
+}
+.touch-btn {
+  min-width: 88px;
+  min-height: 40px;
+  padding: 6px 12px;
+  background: rgba(22, 26, 34, 0.94);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.touch-btn.is-cancel { background: #5a2723; border-color: #a8443c; color: #fff4f1; }
+.rotate-hint { display: none; }
+
+/* 손가락: 단축키 글자를 숨기고 누를 곳을 키운다 */
+.hud.is-touch .cc-key { display: none; }
+.hud.is-touch .cc-grid { grid-template-columns: repeat(4, 70px); grid-auto-rows: 60px; }
+.hud.is-touch .cc-queue-item { padding: 4px 9px; font-size: 12px; }
+.hud.is-touch .hud-info { display: none; }
+
+/* 가로로 눕힌 휴대폰 (세로 공간이 좁다) */
+@media (max-height: 520px) {
+  .hud-top { padding-top: 4px; padding-bottom: 4px; font-size: 12px; gap: 8px; }
+  .hud-top .btn-sm { padding: 3px 10px; }
+  .resources { gap: 0 10px; }
+  .res-label { font-size: 11px; }
+  .res-age { display: none; }
+  .hud-banners { top: 40px; }
+  .hud-banner { padding: 4px 12px; font-size: 13px; }
+  .hud-minimap { padding: 3px; bottom: max(8px, env(safe-area-inset-bottom)); left: max(8px, env(safe-area-inset-left)); }
+  .hud-minimap canvas { width: 112px; height: 112px; }
+  .command-card {
+    left: auto;
+    right: max(8px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+    transform: none;
+    width: min(348px, 46vw);
+    max-height: calc(100vh - 52px);
+    overflow-y: auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
+  }
+  .cc-grid,
+  .hud.is-touch .cc-grid { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); grid-auto-rows: 54px; }
+  .cc-hint { display: none; }
+  .touch-tools { top: auto; right: auto; left: max(8px, env(safe-area-inset-left)); bottom: 136px; grid-auto-flow: column; }
+  .touch-btn { min-width: 0; min-height: 36px; padding: 4px 10px; font-size: 12px; }
+  .result-panel { padding: 16px; gap: 4px; }
+  .result-kicker { font-size: 28px; }
+  .replay-bar { gap: 4px 6px; padding: 5px 8px; }
+  .rp-btn, .rp-speed { min-height: 30px; padding: 2px 8px; font-size: 12px; }
+  .hud.is-replay .hud-minimap, .replay-info { bottom: 94px; }
+}
+
+/* 세로로 든 휴대폰 */
+@media (max-width: 600px) {
+  /* 한 줄을 지킨다: 자원은 안에서 두 줄로 접히고 항복 버튼은 오른쪽에 남는다 (미니맵에 가리지 않게) */
+  .hud-top { flex-wrap: nowrap; align-items: center; font-size: 12px; gap: 8px; min-height: 52px; }
+  .hud-top .resources { gap: 0 9px; }
+  .res-age { display: none; }
+  .hud-right { flex: none; gap: 8px; }
+  .hud-right .mono { display: none; }
+  .hud-banners { top: 64px; width: calc(100vw - 24px); }
+  .hud-banner { white-space: normal; text-align: center; }
+  .hud-minimap { top: 64px; bottom: auto; padding: 3px; }
+  .hud-minimap canvas { width: 104px; height: 104px; }
+  .command-card {
+    left: 8px;
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    transform: none;
+    width: auto;
+    max-height: 44vh;
+    overflow-y: auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
+  }
+  .cc-grid,
+  .hud.is-touch .cc-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); grid-auto-rows: 56px; }
+  .touch-tools { top: 64px; }
+  .hud.is-touch .rotate-hint {
+    display: block;
+    position: absolute;
+    top: 180px;
+    left: 8px;
+    margin: 0;
+    max-width: 110px;
+    font-size: 11.5px;
+    color: var(--text-faint);
+  }
+  .replay-bar { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .rp-seek { grid-column: 1 / -1; min-height: 28px; }
+  .rp-time { grid-column: 1 / -1; text-align: center; }
+  .hud.is-replay .hud-minimap { top: 64px; bottom: auto; }
+  .replay-info { top: 64px; bottom: auto; right: 8px; min-width: 0; }
+  .screen { padding: 20px 14px; }
+}

@@ -159,12 +159,14 @@ const ownerName = (players, slot) => {
 };
 
 /** 선택 상태를 화면에 그릴 모델로 바꾼다 */
-function describe({ world, selection, players }) {
+function describe({ world, selection, players, touch = false }) {
   const ids = [...selection];
   if (ids.length === 0 || !world.ready) {
     return {
       title: '선택한 대상 없음',
-      hint: '클릭해서 선택, 드래그로 여러 유닛 선택, 우클릭으로 명령',
+      hint: touch
+        ? '눌러서 선택 · 길게 누른 채 끌면 여러 유닛 · 끌어서 화면 이동 · 두 손가락으로 확대'
+        : '클릭해서 선택, 드래그로 여러 유닛 선택, 우클릭으로 명령',
       buttons: [],
       live: {},
     };
@@ -174,20 +176,20 @@ function describe({ world, selection, players }) {
     const amount = world.mineAmounts.get(ids[0]) ?? 0;
     return {
       title: '금광',
-      hint: '농노를 선택하고 금광을 우클릭하면 캡니다',
+      hint: touch ? '농노를 고른 채 금광을 누르면 캡니다' : '농노를 선택하고 금광을 우클릭하면 캡니다',
       buttons: [],
       live: { text: `남은 금 ${amount.toLocaleString('ko-KR')}` },
     };
   }
 
   const units = ids.map((id) => world.units.get(id)).filter(Boolean);
-  if (units.length) return describeUnits(world, units, players);
+  if (units.length) return describeUnits(world, units, players, touch);
   const building = world.buildings.get(ids[0]);
-  if (building) return describeBuilding(world, building, players);
+  if (building) return describeBuilding(world, building, players, touch);
   return { title: '선택한 대상 없음', buttons: [], live: {} };
 }
 
-function describeUnits(world, units, players) {
+function describeUnits(world, units, players, touch) {
   const first = units[0];
   const def = UNITS[first.type];
   const model = {
@@ -220,12 +222,16 @@ function describeUnits(world, units, players) {
         action: { kind: 'build', type },
       };
     });
-    model.hint = '건물을 고른 뒤 땅을 클릭 · Shift로 연달아 짓기 · Esc 취소';
+    model.hint = touch
+      ? '건물을 고른 뒤 지을 곳을 누른 채 끌어 맞추고 떼기'
+      : '건물을 고른 뒤 땅을 클릭 · Shift로 연달아 짓기 · Esc 취소';
   }
   // 농노가 섞여 있으면 A는 룬 오벨리스크 단축키라서 공격 이동은 병력만 골랐을 때 보여준다
   if (!units.some((u) => UNITS[u.type].worker)) {
     model.buttons.push({ key: 'A', label: '공격 이동', note: '가며 만난 적과 싸움', action: { kind: 'attackMove' } });
-    if (units.length > 1) model.hint = '우클릭: 적은 공격, 땅은 이동 · A 뒤 클릭: 공격 이동';
+    if (units.length > 1) {
+      model.hint = touch ? '누른 곳으로: 적은 공격, 땅은 이동 · 공격 이동 뒤 누르기' : '우클릭: 적은 공격, 땅은 이동 · A 뒤 클릭: 공격 이동';
+    }
   }
   const guards = units.filter((u) => UNITS[u.type].ability === 'shieldWall');
   if (guards.length) {
@@ -293,7 +299,7 @@ function groupStatus(units) {
   return [...counts].map(([state, n]) => `${STATE_TEXT[state]} ${n}`).join(' · ');
 }
 
-function describeBuilding(world, b, players) {
+function describeBuilding(world, b, players, touch) {
   const def = BUILDINGS[b.type];
   const age = world.ages.get(b.owner) ?? 1;
   const model = {
@@ -354,7 +360,11 @@ function describeBuilding(world, b, players) {
       model.live.progress = production.progress;
       model.live.progressLabel = production.blocked ? `${head} · 인구 부족` : `${head} 생산 중`;
     }
-    model.hint = [def.dropoff ? '금·목재 반납' : null, def.pop ? `인구 +${def.pop}` : null, '우클릭으로 집결지 · Shift로 5기씩']
+    model.hint = [
+      def.dropoff ? '금·목재 반납' : null,
+      def.pop ? `인구 +${def.pop}` : null,
+      touch ? '땅을 누르면 집결지' : '우클릭으로 집결지 · Shift로 5기씩',
+    ]
       .filter(Boolean)
       .join(' · ');
   }

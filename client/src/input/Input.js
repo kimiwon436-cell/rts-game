@@ -46,6 +46,7 @@ export class Input {
     });
 
     this.listen(window, 'pointermove', (e) => {
+      if (e.pointerType === 'touch') return; // 터치는 TouchControls가 맡는다
       if (e.pointerType === 'mouse') {
         if (this.panning) {
           this.panDelta.x += e.clientX - this.mouse.x;
@@ -62,6 +63,7 @@ export class Input {
     });
 
     this.listen(canvas, 'pointerdown', (e) => {
+      if (e.pointerType === 'touch') return;
       this.mouse.x = e.clientX;
       this.mouse.y = e.clientY;
       if (e.button === 1) {
@@ -76,6 +78,7 @@ export class Input {
       }
     });
     this.listen(canvas, 'pointerup', (e) => {
+      if (e.pointerType === 'touch') return;
       if (e.button === 1) {
         this.panning = false;
         return;

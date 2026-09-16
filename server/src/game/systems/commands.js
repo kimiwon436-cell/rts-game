@@ -104,8 +104,9 @@ function applyCommand(world, slot, cmd) {
   }
 }
 
+// 아르카논 등에 탄 유닛은 명령을 받지 않는다 (내리기는 태운 쪽에 명령한다)
 const ownUnits = (world, slot, ids) =>
-  ids.map((id) => world.units.get(id)).filter((unit) => unit && unit.owner === slot);
+  ids.map((id) => world.units.get(id)).filter((unit) => unit && unit.owner === slot && !unit.carrierId);
 
 const workers = (world, slot, ids) => ownUnits(world, slot, ids).filter((unit) => UNITS[unit.type].worker);
 

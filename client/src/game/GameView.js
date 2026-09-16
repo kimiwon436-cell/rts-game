@@ -18,6 +18,7 @@ import { Camera } from '../render/Camera.js';
 import { Renderer } from '../render/Renderer.js';
 import { Minimap } from '../render/minimap.js';
 import { Input } from '../input/Input.js';
+import { TouchControls, isCoarsePointer } from '../input/TouchControls.js';
 import { downloadReplay } from './replayFile.js';
 
 const PAN_SPEED = 1100; // 화면 픽셀/초
@@ -51,6 +52,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
   const renderer = new Renderer(canvas, world, camera, players);
   const minimap = new Minimap(world, camera);
   const input = new Input(canvas);
+  const touchMode = isCoarsePointer();
   const commandCard = createCommandCard({ onAction });
   const selection = renderer.selection;
 
@@ -75,7 +77,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
     world.applySnapshot(snap);
     for (const id of selection) {
       const alive = typeof id === 'string' ? world.mineAmounts.has(id) : world.units.has(id) || world.buildings.has(id);
-      if (!alive) selection.delete(id);
+      if (!alive || world.units.get(id)?.carried) selection.delete(id); // 쓰러졌거나 등에 탔다
     }
     if (placing && selectedWorkerIds().length === 0) cancelPlacing();
     if (targeting && selectedOwnUnits().length === 0) targeting = false;
@@ -333,6 +335,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
       case 'attackMove':
         cancelPlacing();
         targeting = true;
+        if (touchMode) toast('공격 이동 — 갈 곳을 누르세요');
         break;
       case 'shieldWall':
         send({ type: CMD.TOGGLE_ABILITY, unitIds: selectedOwnUnits().map((u) => u.id), ability: 'shieldWall' });
@@ -352,7 +355,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
         cancelPlacing();
         targeting = false;
         casting = { ability: action.ability, unitIds: ids };
-        toast(`${ABILITIES[action.ability].name} — 쓸 곳을 클릭하세요 (Esc 취소)`);
+        toast(`${ABILITIES[action.ability].name} — 쓸 곳을 ${touchMode ? '누르세요' : '클릭하세요 (Esc 취소)'}`);
         break;
       }
       case 'takeOath':
@@ -373,6 +376,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
     targeting = false;
     casting = null;
     placing = type;
+    if (touchMode) toast(`${BUILDINGS[type].name} — 지을 곳을 누른 채 끌어 맞추고 손을 떼세요`);
   }
 
   function cancelPlacing() {
@@ -489,6 +493,118 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
       lastClick = { time: now, unitId: unit?.id ?? null };
     }
   };
+  // ---------- 터치 ----------
+  // 탭 하나로 고르기와 명령을 함께 한다: 내 것을 누르면 고르고, 병력을 고른 채 다른 곳을 누르면 명령한다.
+
+  let touchBox = null;
+  const touch = new TouchControls(canvas, {
+    onTap: (x, y) => tapAt(x, y),
+    onDoubleTap: (x, y) => {
+      const t = toTile(x, y);
+      const unit = world.unitAt(t.x, t.y);
+      if (unit && world.isMine(unit) && !casting && !targeting && !placing) selectSameTypeOnScreen(unit.type, false);
+      else tapAt(x, y);
+    },
+    onPan: (dx, dy) => camera.pan(-dx, -dy),
+    onZoom: (direction, x, y) => camera.zoomAt(direction, x, y),
+    onBox: (phase, x, y) => {
+      if (!world.ready || ended) return;
+      if (phase === 'start') {
+        touchBox = { x0: x, y0: y, x1: x, y1: y };
+      } else if (touchBox && phase === 'move') {
+        touchBox.x1 = x;
+        touchBox.y1 = y;
+      } else if (touchBox && phase === 'end') {
+        if (Math.hypot(touchBox.x1 - touchBox.x0, touchBox.y1 - touchBox.y0) > DRAG_THRESHOLD) selectBox(touchBox, false);
+        touchBox = null;
+      } else {
+        touchBox = null;
+      }
+      renderer.dragBox = touchBox ? { ...touchBox } : null;
+    },
+    // 건물을 놓는 중이면 손가락을 따라 미리보기가 움직이고, 떼는 자리에 짓는다
+    dragsGhost: () => Boolean(placing) && world.ready && !ended,
+    onGhost: (phase, x, y) => {
+      input.mouse.x = x;
+      input.mouse.y = y - (touchMode ? 48 : 0); // 손가락에 가려지지 않게 조금 위에 보여 준다
+      input.mouse.inside = phase === 'start' || phase === 'move';
+      if (phase === 'end') {
+        input.mouse.inside = true;
+        updateGhost();
+        placeGhost(false);
+        input.mouse.inside = false;
+      }
+    },
+  });
+
+  function tapAt(x, y) {
+    if (!world.ready || ended) return;
+    const t = toTile(x, y);
+    if (casting) {
+      send({ type: CMD.USE_ABILITY, unitIds: casting.unitIds, ability: casting.ability, x: t.x, y: t.y });
+      renderer.addMarker(t.x, t.y, 'attack');
+      casting = null;
+      return;
+    }
+    if (targeting) {
+      attackMoveAt(t);
+      targeting = false;
+      return;
+    }
+
+    const own = selectedOwnUnits();
+    const unit = world.unitAt(t.x, t.y);
+    const building = unit ? null : world.buildingAt(Math.floor(t.x), Math.floor(t.y));
+
+    if (unit && world.isMine(unit)) {
+      // 내 아르카논을 누르면 고른 병력이 등에 탄다
+      const boarding = UNITS[unit.type].garrison && own.some((u) => u.id !== unit.id && GARRISON.allow.includes(u.type));
+      if (boarding) commandAt(t);
+      else selectAt(t, false);
+      return;
+    }
+    if (building && world.isMine(building)) {
+      // 농노를 고른 채 짓다 만 건물·반납할 건물을 누르면 일을 시킨다
+      const accepts = BUILDINGS[building.type].dropoff ?? [];
+      const workers = own.filter((u) => UNITS[u.type].worker);
+      const helps = workers.length && (!building.complete || workers.some((u) => u.carryAmount > 0 && accepts.includes(u.carryKind)));
+      if (helps) commandAt(t);
+      else selectAt(t, false);
+      return;
+    }
+    if (own.length || selectedProductionBuilding()) {
+      commandAt(t); // 적은 공격, 금광·나무는 채집, 땅은 이동, 생산 건물이면 집결지
+      return;
+    }
+    selectAt(t, false);
+  }
+
+  /** 터치 화면의 빠른 선택 버튼 */
+  function selectArmy() {
+    const ids = [...world.units.values()]
+      .filter((u) => world.isMine(u) && !u.carried && !UNITS[u.type].worker)
+      .map((u) => u.id);
+    if (!ids.length) toast('고를 병력이 없습니다.');
+    setSelection(ids);
+  }
+
+  function selectIdleWorkers() {
+    const idle = [...world.units.values()].filter((u) => world.isMine(u) && UNITS[u.type].worker && u.state === 0);
+    if (!idle.length) {
+      toast('쉬고 있는 농노가 없습니다.');
+      return;
+    }
+    setSelection(idle.map((u) => u.id));
+    const first = idle[0];
+    camera.centerOn(first.drawX * TILE_SIZE, first.drawY * TILE_SIZE);
+  }
+
+  function cancelMode() {
+    casting = null;
+    targeting = false;
+    cancelPlacing();
+  }
+
   input.handlers.key = (event) => {
     if (ended) return;
     if (event.code === 'Escape') {
@@ -564,6 +680,18 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
     '항복',
   );
 
+  // 터치 화면용 도구: Esc·드래그 선택을 대신한다
+  const cancelModeButton = h('button', { class: 'touch-btn is-cancel', type: 'button', hidden: true, onClick: () => cancelMode() }, '취소');
+  const touchTools = touchMode
+    ? h(
+        'div',
+        { class: 'touch-tools', role: 'group', 'aria-label': '빠른 선택' },
+        cancelModeButton,
+        h('button', { class: 'touch-btn', type: 'button', onClick: () => selectArmy() }, '병력 전체'),
+        h('button', { class: 'touch-btn', type: 'button', onClick: () => selectIdleWorkers() }, '쉬는 농노'),
+      )
+    : null;
+
   const resultPanel = h('div', { class: 'result-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': '경기 결과' });
   const resultOverlay = h('div', { class: 'result-overlay', hidden: true }, resultPanel);
 
@@ -610,7 +738,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
 
   const el = h(
     'div',
-    { class: 'hud' },
+    { class: touchMode ? 'hud is-touch' : 'hud' },
     h(
       'header',
       { class: 'hud-top' },
@@ -620,6 +748,8 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
     ),
     h('div', { class: 'hud-banners' }, crownBanner, netBanner, banner),
     h('div', { class: 'hud-minimap' }, minimap.canvas),
+    touchTools,
+    touchMode ? h('p', { class: 'rotate-hint' }, '가로로 돌리면 더 넓게 볼 수 있습니다') : null,
     commandCard.el,
     h(
       'div',
@@ -674,7 +804,8 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
       crownBanner.hidden = true;
     }
 
-    commandCard.update({ world, selection, players });
+    commandCard.update({ world, selection, players, touch: touchMode });
+    cancelModeButton.hidden = !(casting || targeting || placing);
   }
 
   // ---------- 루프 ----------
@@ -762,6 +893,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
       socket.off('disconnect', onOffline);
       socket.off('connect', onOnline);
       input.destroy();
+      touch.destroy();
       canvas.hidden = true;
     },
   };
