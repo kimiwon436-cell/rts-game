@@ -120,7 +120,7 @@ export class SnapshotFeed {
       snapshot.me = me;
     }
 
-    const own = encodeOwn(world.buildings.values(), slot);
+    const own = encodeOwn(world.buildings.values(), world.units.values(), slot);
     const ownJson = JSON.stringify(own);
     if (this.own.get(slot) !== ownJson) {
       this.own.set(slot, ownJson);
@@ -131,7 +131,7 @@ export class SnapshotFeed {
 
   /** 처음 들어왔거나 끊겼다 돌아온 플레이어에게 보내는 전체 상태 */
   full(world, slot) {
-    const own = encodeOwn(world.buildings.values(), slot);
+    const own = encodeOwn(world.buildings.values(), world.units.values(), slot);
     const me = encodePlayer(world.players[slot]);
     const players = publicPlayers(world);
     this.own.set(slot, JSON.stringify(own));

@@ -30,6 +30,14 @@ const MESSAGES = {
   [REJECT.NEEDS_WELL]: '룬 오벨리스크는 마나 샘 위에만 지을 수 있습니다.',
   [REJECT.WELL_TAKEN]: '이미 오벨리스크가 선 마나 샘입니다.',
   [REJECT.ON_WELL]: '마나 샘 위에는 룬 오벨리스크만 지을 수 있습니다.',
+  // 맹세와 궁극 유닛
+  [REJECT.OATH_ALREADY_TAKEN]: '이미 맹세를 맺었습니다. 맹세는 번복할 수 없습니다.',
+  [REJECT.REQUIRES_OATH]: '맺은 맹세의 궁극 유닛만 부를 수 있습니다.',
+  [REJECT.ULTIMATE_EXISTS]: '궁극 유닛은 한 경기에 한 기만 존재합니다.',
+  [REJECT.ON_COOLDOWN]: '아직 다시 쓸 수 없습니다.',
+  [REJECT.OUT_OF_RANGE]: '너무 멉니다.',
+  [REJECT.GARRISON_FULL]: '등에 더 태울 수 없습니다.',
+  [REJECT.CANNOT_BOARD]: '창병·장궁병·왕실 근위병·전투 마법사만 등에 탈 수 있습니다.',
 };
 
 export const errorMessage = (code) => MESSAGES[code] ?? `알 수 없는 오류입니다 (${code})`;

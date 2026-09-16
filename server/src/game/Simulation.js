@@ -1,5 +1,6 @@
 import { TICK_MS } from '@rune/shared/constants.js';
 import { applyCommands } from './systems/commands.js';
+import { updateAbilities } from './systems/abilities.js';
 import { updateMovement } from './systems/movement.js';
 import { separateUnits } from './systems/separation.js';
 import { updateCombat } from './systems/combat.js';
@@ -15,6 +16,7 @@ export const TICK_SECONDS = TICK_MS / 1000;
 /**
  * 한 틱을 진행한다. 시스템 순서가 곧 규칙이다 (docs/ARCHITECTURE.md 4장).
  * 이동이 전투보다 먼저라서 사거리 판정은 이번 틱에 움직인 위치로 한다.
+ * 능력·상태 효과가 맨 앞이라 이번 틱의 이동·공격에 바로 반영된다.
  * 네트워크와 타이머에 의존하지 않아 테스트에서 그대로 돌릴 수 있다.
  *
  * @param {import('./World.js').World} world
@@ -24,6 +26,7 @@ export const TICK_SECONDS = TICK_MS / 1000;
 export function stepWorld(world, commands = []) {
   const rejects = [];
   applyCommands(world, commands, rejects);
+  updateAbilities(world); // 오라·기절·둔화·영창·부활 — 이동과 전투보다 먼저
   updateMovement(world, TICK_SECONDS); // 경로 요청 처리 포함
   separateUnits(world);
   updateCombat(world, TICK_SECONDS);

@@ -2,6 +2,8 @@ import { PLAYER_COLORS, TILE_SIZE } from '@rune/shared/constants.js';
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { AGES } from '@rune/shared/data/economy.js';
 import { UNITS } from '@rune/shared/data/units.js';
+import { ABILITIES, GARRISON } from '@rune/shared/data/abilities.js';
+import { OATHS, OATH_IDS } from '@rune/shared/data/oaths.js';
 import { loadMap } from '@rune/shared/map/maps/index.js';
 import { TERRAIN, TERRAIN_NAMES, footprintCenter } from '@rune/shared/map/grid.js';
 import { CMD, EV, GAME_EVENT, REJECT, VICTORY_REASON } from '@rune/shared/protocol.js';
@@ -54,6 +56,7 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
   let seq = 0;
   let placing = null; // 배치 중인 건물 종류
   let targeting = false; // 공격 이동 지점을 고르는 중 (A 뒤 클릭)
+  let casting = null; // 능력 쓸 지점을 고르는 중 { ability, unitIds }
   let ended = false;
   let press = null; // 왼쪽 버튼을 누른 위치 { x, y, shift }
   let lastClick = { time: 0, unitId: null }; // 더블클릭 판정
@@ -108,8 +111,33 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
       if (building) toast(`${BUILDINGS[building.type].name}을(를) 다 지었습니다.`);
     } else if (event[0] === GAME_EVENT.AGE_UP && event[1] === mySlot) {
       toast(`${AGES[event[2]].name}에 들어섰습니다.`);
+    } else if (event[0] === GAME_EVENT.OATH_TAKEN) {
+      // 맹세는 전역 공지다: 상대도 대비할 시간을 준다
+      const oath = OATHS[OATH_IDS[event[2]]];
+      const who = event[1] === mySlot ? '내' : `${playerName(event[1])}의`;
+      announce(`${who} 왕국이 ${oath.name}를 맺었습니다 — ${UNITS[oath.unit].name}`);
+    } else if (event[0] === GAME_EVENT.ULTIMATE_REVIVED) {
+      const unit = world.units.get(event[1]);
+      if (event[2] === mySlot) toast(`${UNITS[unit?.type ?? 'solarion'].name}이(가) 다시 일어섰습니다.`);
+    } else if (event[0] === GAME_EVENT.ULTIMATE_LOST) {
+      const name = UNITS[event[2]]?.name ?? '궁극 유닛';
+      if (event[1] === mySlot) toast(`${name}이(가) 쓰러졌습니다.`, { error: true });
+      else toast(`적의 ${name}을(를) 쓰러뜨렸습니다.`);
     }
   };
+
+  const playerName = (slot) => players.find((p) => p.slot === slot)?.nickname ?? `P${slot + 1}`;
+
+  /** 양쪽 모두에게 크게 알리는 공지 (맹세 선언) */
+  function announce(text) {
+    banner.textContent = text;
+    banner.hidden = false;
+    clearTimeout(announceTimer);
+    announceTimer = setTimeout(() => {
+      banner.hidden = true;
+    }, 6000);
+  }
+  let announceTimer = null;
 
   // ---------- 선택 ----------
 
@@ -214,6 +242,17 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
     const units = selectedOwnUnits();
     if (!units.length) return;
 
+    // 내 아르카논을 우클릭하면 등에 탄다
+    const friend = world.unitAt(t.x, t.y);
+    if (friend && world.isMine(friend) && UNITS[friend.type].garrison && units.some((u) => u.id !== friend.id)) {
+      const riders = units.filter((u) => GARRISON.allow.includes(u.type)).map((u) => u.id);
+      if (riders.length) {
+        send({ type: CMD.BOARD, unitIds: riders, targetId: friend.id });
+        renderer.addMarker(t.x, t.y, 'work');
+        return;
+      }
+    }
+
     const enemy = enemyAt(t);
     if (enemy) {
       send({ type: CMD.ATTACK, unitIds: units.map((u) => u.id), targetId: enemy.id });
@@ -292,6 +331,27 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
       case 'shieldWall':
         send({ type: CMD.TOGGLE_ABILITY, unitIds: selectedOwnUnits().map((u) => u.id), ability: 'shieldWall' });
         break;
+      case 'toggleAbility':
+        send({ type: CMD.TOGGLE_ABILITY, unitIds: selectedOwnUnits().map((u) => u.id), ability: action.ability });
+        break;
+      case 'cast':
+        send({ type: CMD.USE_ABILITY, unitIds: selectedOwnUnits().map((u) => u.id), ability: action.ability });
+        break;
+      case 'castTarget': {
+        // 땅을 찍어 쓰는 능력: 다음 클릭 지점으로 보낸다
+        const ids = selectedOwnUnits()
+          .filter((u) => UNITS[u.type].abilities?.includes(action.ability))
+          .map((u) => u.id);
+        if (!ids.length) break;
+        cancelPlacing();
+        targeting = false;
+        casting = { ability: action.ability, unitIds: ids };
+        toast(`${ABILITIES[action.ability].name} — 쓸 곳을 클릭하세요 (Esc 취소)`);
+        break;
+      }
+      case 'takeOath':
+        send({ type: CMD.TAKE_OATH, oath: action.oath });
+        break;
       default:
     }
   }
@@ -305,6 +365,7 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
       return;
     }
     targeting = false;
+    casting = null;
     placing = type;
   }
 
@@ -376,7 +437,12 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
   input.handlers.down = (button, x, y, event) => {
     if (!world.ready || ended) return;
     if (button === 0) {
-      if (targeting) {
+      if (casting) {
+        const t = toTile(x, y);
+        send({ type: CMD.USE_ABILITY, unitIds: casting.unitIds, ability: casting.ability, x: t.x, y: t.y });
+        renderer.addMarker(t.x, t.y, 'attack');
+        casting = null;
+      } else if (targeting) {
         attackMoveAt(toTile(x, y));
         if (!event.shiftKey) targeting = false;
       } else if (placing) {
@@ -385,7 +451,8 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
         press = { x, y, shift: event.shiftKey };
       }
     } else if (button === 2) {
-      if (targeting) targeting = false;
+      if (casting) casting = null;
+      else if (targeting) targeting = false;
       else if (placing) cancelPlacing();
       else commandAt(toTile(x, y));
     }
@@ -419,7 +486,8 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
   input.handlers.key = (event) => {
     if (ended) return;
     if (event.code === 'Escape') {
-      if (targeting) targeting = false;
+      if (casting) casting = null;
+      else if (targeting) targeting = false;
       else if (placing) cancelPlacing();
       else selection.clear();
       return;
@@ -560,6 +628,15 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
         : '—';
     zoomInfo.textContent = `${Math.round(camera.zoom * 100)}%`;
 
+    // 맺은 맹세는 서로에게 공개된다
+    for (const player of players) {
+      const oath = world.oathOf(player.slot);
+      const tag = playerTags.get(player.uid);
+      if (!tag || tag.dataset.oath === (oath ?? '')) continue;
+      tag.dataset.oath = oath ?? '';
+      tag.lastChild.textContent = `P${player.slot + 1} ${player.nickname}${oath ? ` · ${OATHS[oath].name}` : ''}`;
+    }
+
     // 왕관 몰락 카운트다운: 내 것이 급하고, 없으면 상대 것을 보여준다
     const mine = world.publicPlayers.get(mySlot);
     const rival = [...world.publicPlayers.values()].find((p) => p.slot !== mySlot && p.collapseSeconds != null);
@@ -612,6 +689,8 @@ export function createGameView({ canvas, socket, mapId, players, me, onLeave, on
     world.updateDrawPositions(dt);
     updateGhost();
     renderer.attackCursor = targeting && input.mouse.inside ? toTile(input.mouse.x, input.mouse.y) : null;
+    renderer.castCursor =
+      casting && input.mouse.inside ? { ...toTile(input.mouse.x, input.mouse.y), ability: casting.ability } : null;
     if (input.mouse.inside) {
       const t = toTile(input.mouse.x, input.mouse.y);
       renderer.hoverTile = { x: Math.floor(t.x), y: Math.floor(t.y) };

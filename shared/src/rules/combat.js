@@ -26,7 +26,7 @@ export const attackReach = (attack) => (isMelee(attack) ? MELEE_REACH : attack.r
  * 한 번 때릴 때의 피해. 0이면 그 대상을 공격할 수 없다.
  * 최종 피해 = max(1, 공격력 × 유형 배율 × 특수 보너스) — 대장간 업그레이드 배율은 이후 단계에서 곱한다
  *
- * @param {{ attack: object, bonusVsTag?: object, bonusVsBuilding?: object }} attacker UNITS[...] 또는 BUILDINGS[...]
+ * @param {{ attack: object, bonusVsTag?: object, bonusVsArmor?: object, bonusVsBuilding?: object }} attacker
  * @param {{ building: true, type: string } | { def: object, shieldWall?: boolean }} target
  */
 export function computeDamage(attacker, target) {
@@ -39,8 +39,9 @@ export function computeDamage(attacker, target) {
   let bonus = 1;
   if (target.building) {
     bonus *= attacker.bonusVsBuilding?.[target.type] ?? 1;
-  } else if (attacker.bonusVsTag) {
-    for (const tag of target.def.tags ?? []) bonus *= attacker.bonusVsTag[tag] ?? 1;
+  } else {
+    for (const tag of target.def.tags ?? []) bonus *= attacker.bonusVsTag?.[tag] ?? 1;
+    bonus *= attacker.bonusVsArmor?.[target.def.armor] ?? 1; // 거인 사냥꾼: 거대 ×3
   }
 
   let damage = attack.damage * multiplier * bonus;

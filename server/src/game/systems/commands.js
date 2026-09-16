@@ -1,15 +1,18 @@
 import { UNITS } from '@rune/shared/data/units.js';
 import { BUILDINGS, BUILD_MENU, PRODUCTION_QUEUE_MAX } from '@rune/shared/data/buildings.js';
+import { ABILITIES } from '@rune/shared/data/abilities.js';
+import { OATHS, OATH_IDS } from '@rune/shared/data/oaths.js';
 import { AGES, MAX_AGE, RESOURCES } from '@rune/shared/data/economy.js';
 import { MARKET, TRADABLE, buyCost, sellGain } from '@rune/shared/data/market.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
-import { CMD, REJECT, UNIT_STATE, VICTORY_REASON } from '@rune/shared/protocol.js';
+import { CMD, GAME_EVENT, REJECT, UNIT_STATE, VICTORY_REASON } from '@rune/shared/protocol.js';
 import { computeDamage } from '@rune/shared/rules/combat.js';
 import { PLACE, checkPlacement } from '@rune/shared/rules/placement.js';
 import { missingResource } from '@rune/shared/rules/costs.js';
 import { orderGather, orderReturnCargo } from './gathering.js';
 import { cancelConstruction, orderConstruct } from './construction.js';
 import { defeatPlayer } from './victory.js';
+import { hasAbility, orderBoard, toggleUnitAbility, useAbility } from './abilities.js';
 
 const MAX_UNIT_IDS = 60;
 const NOT_ENOUGH = { gold: REJECT.NOT_ENOUGH_GOLD, wood: REJECT.NOT_ENOUGH_WOOD, mana: REJECT.NOT_ENOUGH_MANA };
@@ -35,7 +38,7 @@ export function sanitizeCommand(raw) {
     if (!Number.isInteger(raw[key])) return null;
     cmd[key] = raw[key];
   }
-  for (const key of ['building', 'unit', 'mineId', 'resource', 'action', 'ability']) {
+  for (const key of ['building', 'unit', 'mineId', 'resource', 'action', 'ability', 'oath']) {
     if (raw[key] === undefined) continue;
     if (typeof raw[key] !== 'string' || raw[key].length > 32) return null;
     cmd[key] = raw[key];
@@ -87,6 +90,12 @@ function applyCommand(world, slot, cmd) {
       return move(world, slot, cmd, true);
     case CMD.TOGGLE_ABILITY:
       return toggleAbility(world, slot, cmd);
+    case CMD.USE_ABILITY:
+      return castAbility(world, slot, cmd);
+    case CMD.BOARD:
+      return board(world, slot, cmd);
+    case CMD.TAKE_OATH:
+      return takeOath(world, slot, cmd);
     case CMD.SURRENDER:
       defeatPlayer(world, world.players[slot], VICTORY_REASON.SURRENDER);
       return null;
@@ -141,13 +150,58 @@ function attack(world, slot, { unitIds, targetId }) {
   return null;
 }
 
-/** 방패벽 켜기·끄기. 고른 근위병 중 하나라도 꺼져 있으면 모두 켜고, 모두 켜져 있으면 모두 끈다. */
+/**
+ * 켜고 끄는 능력 (방패벽, 뿌리내리기).
+ * 고른 유닛 중 하나라도 꺼져 있으면 모두 켜고, 모두 켜져 있으면 모두 끈다.
+ */
 function toggleAbility(world, slot, { unitIds, ability }) {
-  if (ability !== 'shieldWall') return REJECT.INVALID;
-  const guards = ownUnits(world, slot, unitIds).filter((unit) => UNITS[unit.type].ability === 'shieldWall');
-  if (!guards.length) return REJECT.INVALID_TARGET;
-  const enable = guards.some((unit) => !unit.shieldWall);
-  for (const unit of guards) unit.shieldWall = enable;
+  if (ABILITIES[ability]?.kind !== 'toggle') return REJECT.INVALID;
+  const isOn = (unit) => (ability === 'shieldWall' ? unit.shieldWall : unit.rooted);
+  const units = ownUnits(world, slot, unitIds).filter(
+    (unit) => hasAbility(unit, ability) || (ability === 'shieldWall' && UNITS[unit.type].ability === 'shieldWall'),
+  );
+  if (!units.length) return REJECT.INVALID_TARGET;
+
+  const enable = units.some((unit) => !isOn(unit));
+  let reason = null;
+  for (const unit of units) reason = toggleUnitAbility(world, unit, ability, enable) ?? reason;
+  return reason;
+}
+
+/** 땅을 찍어 쓰거나 바로 쓰는 능력 (여명 돌격·성좌 붕괴·시간의 결계·내리기) */
+function castAbility(world, slot, { unitIds, ability, x, y }) {
+  const point = Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  const units = ownUnits(world, slot, unitIds).filter((unit) => hasAbility(unit, ability));
+  if (!units.length) return REJECT.INVALID_TARGET;
+
+  let reason = null;
+  let used = false;
+  for (const unit of units) {
+    const result = useAbility(world, unit, ability, point);
+    if (result) reason = result;
+    else used = true;
+  }
+  return used ? null : reason;
+}
+
+/** 아르카논 등에 태우기 */
+function board(world, slot, { unitIds, targetId }) {
+  const carrier = world.units.get(targetId);
+  if (!carrier || carrier.owner !== slot) return REJECT.INVALID_TARGET;
+  const units = ownUnits(world, slot, unitIds);
+  if (!units.length) return REJECT.INVALID_TARGET;
+  return orderBoard(world, units, carrier);
+}
+
+/** 맹세를 맺는다. 한 경기에 한 번, 번복할 수 없다. */
+function takeOath(world, slot, { oath }) {
+  const player = world.players[slot];
+  if (!OATHS[oath]) return REJECT.INVALID;
+  if (player.oath) return REJECT.OATH_ALREADY_TAKEN;
+  if (!world.hasCompleted(slot, 'sanctum')) return REJECT.REQUIRES_BUILDING;
+
+  player.oath = oath;
+  world.events.push([GAME_EVENT.OATH_TAKEN, slot, OATH_IDS.indexOf(oath)]);
   return null;
 }
 
@@ -187,30 +241,56 @@ export function assignSlots(units, slots, x, y) {
   return assigned;
 }
 
+/** 생산처: 완성된 내 건물, 또는 뿌리내린 내 아르카논 */
+function producer(world, slot, id) {
+  const building = world.buildings.get(id);
+  if (building) {
+    if (building.owner !== slot || !building.complete) return null;
+    return { entity: building, trains: BUILDINGS[building.type].trains };
+  }
+  const unit = world.units.get(id);
+  if (unit && unit.owner === slot && unit.rooted) return { entity: unit, trains: ABILITIES.root.trains };
+  return null;
+}
+
+/** 살아 있거나, 생산 중이거나, 부활을 기다리는 궁극 유닛이 있는가 (한 경기에 한 기) */
+function hasUltimate(world, player) {
+  if (player.revive) return true;
+  for (const unit of world.units.values()) {
+    if (unit.owner === player.slot && UNITS[unit.type].ultimate) return true;
+  }
+  for (const building of world.buildings.values()) {
+    if (building.owner === player.slot && building.queue.some((item) => UNITS[item.type].ultimate)) return true;
+  }
+  return false;
+}
+
 function train(world, slot, { buildingId, unit: type }) {
-  const building = world.buildings.get(buildingId);
-  if (!building || building.owner !== slot || !building.complete) return REJECT.INVALID_TARGET;
+  const source = producer(world, slot, buildingId);
+  if (!source) return REJECT.INVALID_TARGET;
   const def = UNITS[type];
-  if (!def || !BUILDINGS[building.type].trains?.includes(type)) return REJECT.INVALID;
+  if (!def || !source.trains?.includes(type)) return REJECT.INVALID;
 
   const player = world.players[slot];
   if (player.age < def.age) return REJECT.REQUIRES_AGE;
-  if (building.queue.length >= PRODUCTION_QUEUE_MAX) return REJECT.QUEUE_FULL;
+  if (def.oath && player.oath !== def.oath) return REJECT.REQUIRES_OATH; // 맺은 맹세의 유닛만
+  if (def.ultimate && hasUltimate(world, player)) return REJECT.ULTIMATE_EXISTS;
+  if (source.entity.queue.length >= PRODUCTION_QUEUE_MAX) return REJECT.QUEUE_FULL;
   const missing = missingResource(player, def.cost);
   if (missing) return NOT_ENOUGH[missing];
 
   pay(player, def.cost);
-  building.queue.push({ type, progress: 0, blocked: false });
+  source.entity.queue.push({ type, progress: 0, blocked: false });
   return null;
 }
 
 /** 생산 취소: 비용을 모두 돌려준다 */
 function cancelTrain(world, slot, { buildingId, index }) {
-  const building = world.buildings.get(buildingId);
-  if (!building || building.owner !== slot || !Number.isInteger(index) || !building.queue[index]) {
+  const entity = world.buildings.get(buildingId) ?? world.units.get(buildingId);
+  if (!entity || entity.owner !== slot || !Number.isInteger(index) || !entity.queue?.[index]) {
     return REJECT.INVALID_TARGET;
   }
-  const [item] = building.queue.splice(index, 1);
+  const [item] = entity.queue.splice(index, 1);
   const cost = UNITS[item.type].cost;
   for (const resource of RESOURCES) world.players[slot][resource] += cost[resource] ?? 0;
   return null;
@@ -309,6 +389,10 @@ function ageUp(world, slot) {
   const next = AGES[player.age + 1];
   if (!world.hasCompleted(slot, 'keep')) return REJECT.REQUIRES_BUILDING;
   if (next.requires?.some((type) => !world.hasCompleted(slot, type))) return REJECT.REQUIRES_BUILDING;
+  if (next.requiresAny) {
+    const built = next.requiresAny.types.filter((type) => world.hasCompleted(slot, type)).length;
+    if (built < next.requiresAny.count) return REJECT.REQUIRES_BUILDING;
+  }
   const missing = missingResource(player, next.cost);
   if (missing) return NOT_ENOUGH[missing];
 

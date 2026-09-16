@@ -8,13 +8,28 @@
 import { TICK_MS } from './constants.js';
 import { UNIT_TYPES } from './data/units.js';
 import { BUILDING_TYPES } from './data/buildings.js';
+import { ABILITY_IDS } from './data/abilities.js';
+import { OATH_IDS } from './data/oaths.js';
 
 /** 좌표를 1/16 타일 정수로 보낸다 */
 export const POS_SCALE = 16;
 
 const UNIT_INDEX = Object.fromEntries(UNIT_TYPES.map((type, i) => [type, i]));
 const BUILDING_INDEX = Object.fromEntries(BUILDING_TYPES.map((type, i) => [type, i]));
+const ABILITY_INDEX = Object.fromEntries(ABILITY_IDS.map((id, i) => [id, i]));
 const CARRY_KINDS = [null, 'gold', 'wood'];
+
+/** 유닛 상태 비트 (인코딩 9번 칸) */
+export const UNIT_FLAG = Object.freeze({
+  SHIELD_WALL: 1,
+  STUNNED: 2,
+  SLOWED: 4,
+  ROOTED: 8,
+  ROOTING: 16, // 뿌리내리는·뽑는 중
+  CHANNELING: 32,
+  AURA: 64, // 새벽의 오라를 받는 중
+  CARRIED: 128, // 아르카논 등에 타고 있다
+});
 
 export function encodeUnit(u) {
   return [
@@ -27,7 +42,15 @@ export function encodeUnit(u) {
     u.state,
     u.carry ? CARRY_KINDS.indexOf(u.carry.kind) : 0,
     u.carry ? u.carry.amount : 0,
-    u.shieldWall ? 1 : 0, // 상태 비트: 1 = 방패벽
+    (u.shieldWall ? UNIT_FLAG.SHIELD_WALL : 0) |
+      (u.stunned ? UNIT_FLAG.STUNNED : 0) |
+      (u.slowed ? UNIT_FLAG.SLOWED : 0) |
+      (u.rooted ? UNIT_FLAG.ROOTED : 0) |
+      (u.rooting ? UNIT_FLAG.ROOTING : 0) |
+      (u.channeling ? UNIT_FLAG.CHANNELING : 0) |
+      (u.buffed ? UNIT_FLAG.AURA : 0) |
+      (u.carried ? UNIT_FLAG.CARRIED : 0),
+    u.extra ?? 0, // 유닛 종류별 추가 값: 아르카논=탑승 인원, 에테리아=영창 남은 틱
   ];
 }
 
@@ -42,18 +65,40 @@ export function decodeUnit(a) {
     state: a[6],
     carryKind: CARRY_KINDS[a[7]],
     carryAmount: a[8],
-    shieldWall: Boolean(a[9] & 1),
+    extra: a[10] ?? 0,
+    ...decodeFlags(a[9]),
   };
 }
 
-/** 모두에게 보이는 플레이어 정보: [slot, 시대, 왕관 몰락까지 남은 초(없으면 -1), 패배 0|1] */
+/** 상태 비트를 이름 붙은 값으로 (클라이언트 UI·렌더링용) */
+export function decodeFlags(flags) {
+  return {
+    flags,
+    shieldWall: Boolean(flags & UNIT_FLAG.SHIELD_WALL),
+    stunned: Boolean(flags & UNIT_FLAG.STUNNED),
+    slowed: Boolean(flags & UNIT_FLAG.SLOWED),
+    rooted: Boolean(flags & UNIT_FLAG.ROOTED),
+    rooting: Boolean(flags & UNIT_FLAG.ROOTING),
+    channeling: Boolean(flags & UNIT_FLAG.CHANNELING),
+    buffed: Boolean(flags & UNIT_FLAG.AURA),
+    carried: Boolean(flags & UNIT_FLAG.CARRIED),
+  };
+}
+
+/** 모두에게 보이는 플레이어 정보: [slot, 시대, 왕관 몰락까지 남은 초(없으면 -1), 패배 0|1, 맹세(없으면 -1)] */
 export function encodePublicPlayer(p, tick) {
   const collapseSeconds = p.collapseAt == null ? -1 : Math.max(0, Math.ceil(((p.collapseAt - tick) * TICK_MS) / 1000));
-  return [p.slot, p.age, collapseSeconds, p.defeated ? 1 : 0];
+  return [p.slot, p.age, collapseSeconds, p.defeated ? 1 : 0, p.oath ? OATH_IDS.indexOf(p.oath) : -1];
 }
 
 export function decodePublicPlayer(a) {
-  return { slot: a[0], age: a[1], collapseSeconds: a[2] < 0 ? null : a[2], defeated: Boolean(a[3]) };
+  return {
+    slot: a[0],
+    age: a[1],
+    collapseSeconds: a[2] < 0 ? null : a[2],
+    defeated: Boolean(a[3]),
+    oath: a[4] >= 0 ? OATH_IDS[a[4]] : null,
+  };
 }
 
 export function encodeBuilding(b) {
@@ -99,31 +144,53 @@ export function encodePlayer(p) {
 }
 
 /**
- * 내 건물만의 정보: 생산 대기열과 집결지.
- * { q: [[buildingId, [unitTypeIndex...], 맨 앞 진행도 0–1000, 인구 부족으로 멈춤 0|1]], r: [[buildingId, x16, y16]] }
+ * 나만 보는 정보: 생산 대기열, 집결지, 능력 재사용 대기.
+ * {
+ *   q: [[id, [unitTypeIndex...], 맨 앞 진행도 0–1000, 인구 부족으로 멈춤 0|1]],  // 건물과 뿌리내린 아르카논
+ *   r: [[buildingId, x16, y16]],
+ *   a: [[unitId, abilityIndex, 다시 쓸 수 있는 틱]]   // 남은 시간이 아니라 '틱'이라 매 틱 바뀌지 않는다
+ * }
  */
-export function encodeOwn(buildings, slot) {
+export function encodeOwn(buildings, units, slot) {
   const q = [];
   const r = [];
+  const a = [];
+  const pushQueue = (entity) => {
+    const head = entity.queue[0];
+    q.push([
+      entity.id,
+      entity.queue.map((item) => UNIT_INDEX[item.type]),
+      Math.floor(head.progress * 1000),
+      head.blocked ? 1 : 0,
+    ]);
+  };
+
   for (const b of buildings) {
     if (b.owner !== slot) continue;
-    if (b.queue?.length) {
-      const head = b.queue[0];
-      q.push([b.id, b.queue.map((item) => UNIT_INDEX[item.type]), Math.floor(head.progress * 1000), head.blocked ? 1 : 0]);
-    }
+    if (b.queue?.length) pushQueue(b);
     if (b.rally) r.push([b.id, Math.round(b.rally.x * POS_SCALE), Math.round(b.rally.y * POS_SCALE)]);
   }
-  return { q, r };
+  for (const u of units) {
+    if (u.owner !== slot) continue;
+    if (u.queue?.length) pushQueue(u);
+    for (const ability in u.cooldowns ?? {}) a.push([u.id, ABILITY_INDEX[ability], u.cooldowns[ability]]);
+  }
+  return { q, r, a };
 }
 
 export function decodeOwn(own) {
   const queues = new Map();
   const rallies = new Map();
+  const cooldowns = new Map(); // unitId → { ability: 다시 쓸 수 있는 틱 }
   for (const [id, types, progress, blocked] of own?.q ?? []) {
     queues.set(id, { types: types.map((i) => UNIT_TYPES[i]), progress: progress / 1000, blocked: Boolean(blocked) });
   }
   for (const [id, x, y] of own?.r ?? []) rallies.set(id, { x: x / POS_SCALE, y: y / POS_SCALE });
-  return { queues, rallies };
+  for (const [id, ability, readyTick] of own?.a ?? []) {
+    if (!cooldowns.has(id)) cooldowns.set(id, {});
+    cooldowns.get(id)[ABILITY_IDS[ability]] = readyTick;
+  }
+  return { queues, rallies, cooldowns };
 }
 
 export function decodePlayer(a) {
@@ -144,7 +211,7 @@ export function decodePlayer(a) {
 // 틱마다 바뀐 필드만 보낸다. 서버는 지난번에 보낸 인코딩과 비교해 마스크를 만들고,
 // 클라이언트는 마스크를 보고 그 필드만 덮어쓴다.
 
-export const UNIT_DELTA = Object.freeze({ POS: 1, HP: 2, STATE: 4, CARRY: 8, FLAGS: 16 });
+export const UNIT_DELTA = Object.freeze({ POS: 1, HP: 2, STATE: 4, CARRY: 8, FLAGS: 16, EXTRA: 32 });
 export const BUILDING_DELTA = Object.freeze({ HP: 1, PROGRESS: 2, FLAGS: 4 });
 
 /** 바뀐 필드만 담은 [id, 마스크, ...값]. 바뀐 게 없으면 null */
@@ -171,6 +238,10 @@ export function diffUnit(previous, current) {
     mask |= UNIT_DELTA.FLAGS;
     values.push(current[9]);
   }
+  if (previous[10] !== current[10]) {
+    mask |= UNIT_DELTA.EXTRA;
+    values.push(current[10]);
+  }
   return mask ? [current[0], mask, ...values] : null;
 }
 
@@ -189,7 +260,8 @@ export function applyUnitDelta(unit, delta) {
     unit.carryKind = CARRY_KINDS[delta[i++]];
     unit.carryAmount = delta[i++];
   }
-  if (mask & UNIT_DELTA.FLAGS) unit.shieldWall = Boolean(delta[i++] & 1);
+  if (mask & UNIT_DELTA.FLAGS) Object.assign(unit, decodeFlags(delta[i++]));
+  if (mask & UNIT_DELTA.EXTRA) unit.extra = delta[i++];
   return moved;
 }
 

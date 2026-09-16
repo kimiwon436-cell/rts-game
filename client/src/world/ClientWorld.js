@@ -3,6 +3,7 @@ import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { UNITS } from '@rune/shared/data/units.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
 import { GAME_EVENT } from '@rune/shared/protocol.js';
+import { ABILITIES, ABILITY_IDS } from '@rune/shared/data/abilities.js';
 import {
   applyBuildingDelta,
   applyUnitDelta,
@@ -11,6 +12,7 @@ import {
   decodePlayer,
   decodePublicPlayer,
   decodeUnit,
+  POS_SCALE,
 } from '@rune/shared/snapshot.js';
 
 /** 유닛은 그리는 위치, 건물은 풋프린트 중심 (타일 좌표) */
@@ -47,8 +49,9 @@ export class ClientWorld {
     /** 마지막으로 받은 서버 틱과, 지금 그리고 있는 시점(소수 틱) */
     this.serverTick = -1;
     this.renderTick = -1;
-    this.queues = new Map(); // buildingId → 생산 대기열
+    this.queues = new Map(); // 건물·뿌리내린 아르카논 → 생산 대기열
     this.rallies = new Map(); // buildingId → 집결지
+    this.cooldowns = new Map(); // unitId → { 능력: 다시 쓸 수 있는 틱 }
     this.occupied = new Uint8Array(map.tiles.length);
     this.occupancyDirty = true;
     /** @type {(tile: number) => void} */
@@ -120,17 +123,19 @@ export class ClientWorld {
       else if (this.mineAmounts.delete(id)) this.occupancyDirty = true;
     }
 
-    // 내 건물의 생산 대기열과 집결지. 안 바뀌었으면 own이 오지 않으니 지난 값을 그대로 쓴다
+    // 내 건물·유닛의 생산 대기열, 집결지, 능력 대기. 안 바뀌었으면 own이 오지 않으니 지난 값을 그대로 쓴다
     if (snap.own) {
-      const { queues, rallies } = decodeOwn(snap.own);
+      const { queues, rallies, cooldowns } = decodeOwn(snap.own);
       this.queues = queues;
       this.rallies = rallies;
+      this.cooldowns = cooldowns;
     }
-    if (snap.own || snap.addB?.length) {
+    if (snap.own || snap.addB?.length || snap.addU?.length) {
       for (const building of this.buildings.values()) {
         building.production = this.queues.get(building.id) ?? null;
         building.rally = this.rallies.get(building.id) ?? null;
       }
+      for (const unit of this.units.values()) unit.production = this.queues.get(unit.id) ?? null;
     }
 
     for (const event of snap.ev ?? []) {
@@ -150,6 +155,7 @@ export class ClientWorld {
     this.mineAmounts.clear();
     this.queues.clear();
     this.rallies.clear();
+    this.cooldowns.clear();
     this.effects.length = 0;
     this.renderTick = -1;
     this.occupancyDirty = true;
@@ -188,12 +194,38 @@ export class ClientWorld {
     } else if (event[0] === GAME_EVENT.UNIT_DIED) {
       const unit = removed.get(event[1]);
       if (unit) this.effects.push({ kind: 'death', x: unit.drawX, y: unit.drawY, start: now, duration: 700 });
+    } else if (event[0] === GAME_EVENT.ABILITY) {
+      this.addAbilityEffect(event, now);
     } else if (event[0] === GAME_EVENT.BUILDING_DESTROYED) {
       const building = removed.get(event[1]);
       if (building) {
         const { x, y } = centerOf(building);
         this.effects.push({ kind: 'rubble', x, y, size: building.size, start: now, duration: 1600 });
       }
+    }
+  }
+
+  /** 능력 효과: 돌진 자국, 성좌 붕괴 영창·폭발, 시간의 결계 */
+  addAbilityEffect(event, now) {
+    const [, unitId, abilityIndex, x16, y16, phase] = event;
+    const ability = ABILITY_IDS[abilityIndex];
+    const x = x16 / POS_SCALE;
+    const y = y16 / POS_SCALE;
+    const unit = this.units.get(unitId);
+
+    if (ability === 'dawnCharge' && unit) {
+      this.effects.push({ kind: 'charge', from: { x: unit.drawX, y: unit.drawY }, to: { x, y }, start: now, duration: 450 });
+    } else if (ability === 'starfall') {
+      this.effects = this.effects.filter((e) => e.kind !== 'starfallCast'); // 영창은 하나뿐
+      if (phase === 0) {
+        this.effects.push({ kind: 'starfallCast', x, y, radius: ABILITIES.starfall.radius, start: now, duration: ABILITIES.starfall.channel * 1000 });
+      } else if (phase === 1) {
+        this.effects.push({ kind: 'starfallHit', x, y, radius: ABILITIES.starfall.radius, start: now, duration: 800 });
+      }
+    } else if (ability === 'timeWard') {
+      this.effects.push({ kind: 'ward', x, y, radius: ABILITIES.timeWard.radius, start: now, duration: ABILITIES.timeWard.duration * 1000 });
+    } else if (ability === 'root' && phase === 1 && unit) {
+      this.effects.push({ kind: 'rootBurst', x: unit.drawX, y: unit.drawY, start: now, duration: 600 });
     }
   }
 
@@ -241,6 +273,15 @@ export class ClientWorld {
     return entity.owner === this.mySlot;
   }
 
+  /** 내가 맺은 맹세 (없으면 null) */
+  myOath() {
+    return this.publicPlayers.get(this.mySlot)?.oath ?? null;
+  }
+
+  oathOf(slot) {
+    return this.publicPlayers.get(slot)?.oath ?? null;
+  }
+
   terrainAt(tx, ty) {
     if (tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height) return -1;
     return this.tiles[ty * this.map.width + tx];
@@ -251,6 +292,7 @@ export class ClientWorld {
     let best = null;
     let bestScore = Infinity;
     for (const unit of this.units.values()) {
+      if (unit.carried) continue; // 등에 탄 유닛은 고를 수 없다
       const d = Math.hypot(unit.drawX - x, unit.drawY - y);
       if (d > UNITS[unit.type].radius + 0.3) continue;
       const score = d - (this.isMine(unit) ? 1 : 0);
@@ -282,7 +324,7 @@ export class ClientWorld {
     const [minX, maxX] = x0 < x1 ? [x0, x1] : [x1, x0];
     const [minY, maxY] = y0 < y1 ? [y0, y1] : [y1, y0];
     return [...this.units.values()].filter(
-      (u) => this.isMine(u) && u.drawX >= minX && u.drawX <= maxX && u.drawY >= minY && u.drawY <= maxY,
+      (u) => this.isMine(u) && !u.carried && u.drawX >= minX && u.drawX <= maxX && u.drawY >= minY && u.drawY <= maxY,
     );
   }
 

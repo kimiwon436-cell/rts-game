@@ -1,5 +1,6 @@
 import { SHIELD_WALL, UNITS } from '@rune/shared/data/units.js';
 import { lineOfSight } from '../pathfinding/astar.js';
+import { canMove, slowFactor } from './abilities.js';
 
 /** 한 틱에 계산할 경로 요청의 최대 개수와 시간 (docs/ARCHITECTURE.md 6장) */
 export const PATH_BUDGET = Object.freeze({ count: 24, ms: 8 });
@@ -13,6 +14,7 @@ export function updateMovement(world, dt) {
 
   for (const unit of world.units.values()) {
     if (!unit.path) continue;
+    if (!canMove(world, unit)) continue; // 기절·영창·뿌리내림
     const def = UNITS[unit.type];
 
     if (unit.navVersion !== world.nav.version) {
@@ -20,7 +22,7 @@ export function updateMovement(world, dt) {
       if (pathBlocked(world.nav, unit, def.radius * 0.5)) repath(world, unit);
     }
 
-    let step = def.speed * (unit.shieldWall ? SHIELD_WALL.speedMultiplier : 1) * dt;
+    let step = def.speed * (unit.shieldWall ? SHIELD_WALL.speedMultiplier : 1) * slowFactor(world, unit) * dt;
     while (step > 0 && unit.path) {
       const [wx, wy] = unit.path[0];
       const dx = wx - unit.x;

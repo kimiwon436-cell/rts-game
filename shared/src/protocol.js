@@ -54,7 +54,10 @@ export const CMD = Object.freeze({
   SET_RALLY: 'setRally', // { buildingId, x, y } — mineId나 tile을 주면 새 농노가 바로 채집한다
   ATTACK: 'attack', // { unitIds, targetId } — 적 유닛·건물
   ATTACK_MOVE: 'attackMove', // { unitIds, x, y } — 가다가 만나는 적과 싸운다
-  TOGGLE_ABILITY: 'toggleAbility', // { unitIds, ability: 'shieldWall' }
+  TOGGLE_ABILITY: 'toggleAbility', // { unitIds, ability: 'shieldWall' | 'root' } — 켜고 끄기
+  USE_ABILITY: 'useAbility', // { unitIds, ability, x, y } — 땅을 찍어 쓰거나 바로 쓴다
+  BOARD: 'board', // { unitIds, targetId } — 아르카논 등에 태우기
+  TAKE_OATH: 'takeOath', // { oath: 'crown' | 'rune' | 'earth' } — 한 경기에 한 번
   SURRENDER: 'surrender', // {}
 });
 
@@ -82,6 +85,13 @@ export const REJECT = Object.freeze({
   NO_MARKET: 'NO_MARKET',
   QUEUE_FULL: 'QUEUE_FULL',
   CANNOT_ATTACK: 'CANNOT_ATTACK',
+  OATH_ALREADY_TAKEN: 'OATH_ALREADY_TAKEN',
+  REQUIRES_OATH: 'REQUIRES_OATH',
+  ULTIMATE_EXISTS: 'ULTIMATE_EXISTS',
+  ON_COOLDOWN: 'ON_COOLDOWN',
+  OUT_OF_RANGE: 'OUT_OF_RANGE',
+  GARRISON_FULL: 'GARRISON_FULL',
+  CANNOT_BOARD: 'CANNOT_BOARD',
   // 배치 판정 (shared/src/rules/placement.js의 PLACE와 같은 값)
   OUT_OF_BOUNDS: 'OUT_OF_BOUNDS',
   BLOCKED: 'BLOCKED',
@@ -113,4 +123,8 @@ export const GAME_EVENT = Object.freeze({
   CROWN_FALLING: 9, // [code, ownerSlot] — 영주관을 모두 잃어 왕관 몰락 카운트다운 시작
   CROWN_RESTORED: 10, // [code, ownerSlot] — 영주관을 다시 지어 카운트다운 취소
   PLAYER_DEFEATED: 11, // [code, ownerSlot]
+  OATH_TAKEN: 12, // [code, ownerSlot, oathIndex] — 전역 공지
+  ABILITY: 13, // [code, unitId, abilityIndex, x16, y16] — 능력 사용 효과 (x·y는 대상 지점)
+  ULTIMATE_REVIVED: 14, // [code, unitId, ownerSlot] — 솔라리온 부활
+  ULTIMATE_LOST: 15, // [code, ownerSlot, unitTypeIndex] — 궁극 유닛이 쓰러졌다
 });

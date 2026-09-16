@@ -1,4 +1,6 @@
+import { UNITS } from '@rune/shared/data/units.js';
 import { GAME_EVENT } from '@rune/shared/protocol.js';
+import { onUltimateDied } from './abilities.js';
 
 /**
  * 체력이 다한 유닛과 건물을 없앤다.
@@ -7,6 +9,7 @@ import { GAME_EVENT } from '@rune/shared/protocol.js';
 export function removeDead(world) {
   for (const unit of world.units.values()) {
     if (unit.hp > 0) continue;
+    if (UNITS[unit.type].ultimate) onUltimateDied(world, unit); // 부활 예약·탑승 유닛 내리기
     world.units.delete(unit.id);
     world.events.push([GAME_EVENT.UNIT_DIED, unit.id]);
   }

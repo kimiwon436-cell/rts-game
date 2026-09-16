@@ -1,4 +1,4 @@
-// 유닛 능력치 — docs/GAME_DESIGN.md 3장 (MVP 유닛 7종)
+// 유닛 능력치 — docs/GAME_DESIGN.md 3·4장 (기본 7종 + 맹세의 궁극 유닛 3종)
 // 사거리·이동 속도·반지름은 타일 단위, 생산 시간·공격 간격은 초 단위
 
 export const UNITS = Object.freeze({
@@ -106,7 +106,74 @@ export const UNITS = Object.freeze({
     radius: 0.3,
     attack: { damage: 20, type: 'magic', range: 5, cooldown: 2.0, splash: 1.2 },
   },
+
+  // ---------- 맹세의 궁극 유닛 (왕국 시대, 맹세의 성소) ----------
+  // 한 경기에 한 기만 존재한다. oath가 맞는 플레이어만 뽑을 수 있다.
+
+  solarion: {
+    id: 'solarion',
+    name: '솔라리온',
+    title: '새벽의 성기사왕',
+    age: 3,
+    producedAt: 'sanctum',
+    oath: 'crown',
+    ultimate: true,
+    cost: { gold: 800, wood: 300, mana: 400 },
+    trainTime: 90,
+    pop: 6,
+    hp: 1800,
+    armor: 'heavy',
+    speed: 3.0,
+    radius: 0.55,
+    attack: { damage: 60, type: 'normal', range: 1, cooldown: 1.2 },
+    tags: ['cavalry'],
+    bonusVsArmor: { colossal: 3 }, // 거인 사냥꾼
+    abilities: ['dawnCharge'],
+    aura: { radius: 6, damage: 1.2, resist: 0.85 }, // 새벽의 오라
+    revive: { delay: 60, cost: { gold: 300, wood: 0, mana: 0 } }, // 불멸의 맹세
+  },
+  etheria: {
+    id: 'etheria',
+    name: '에테리아',
+    title: '별을 엮는 대마법사',
+    age: 3,
+    producedAt: 'sanctum',
+    oath: 'rune',
+    ultimate: true,
+    cost: { gold: 400, wood: 200, mana: 900 },
+    trainTime: 90,
+    pop: 6,
+    hp: 900,
+    armor: 'light',
+    speed: 2.2,
+    radius: 0.42,
+    attack: { damage: 40, type: 'magic', range: 7, cooldown: 1.8, chain: { targets: 3, falloff: 0.25 } },
+    abilities: ['starfall', 'timeWard'],
+    manaResonance: { perObelisk: 0.1, max: 0.4 }, // 마나 샘 1곳당 재사용 대기시간 -10%
+  },
+  arkanon: {
+    id: 'arkanon',
+    name: '아르카논',
+    title: '성채를 짊어진 신수',
+    age: 3,
+    producedAt: 'sanctum',
+    oath: 'earth',
+    ultimate: true,
+    cost: { gold: 600, wood: 600, mana: 600 },
+    trainTime: 120,
+    pop: 10,
+    hp: 5000,
+    armor: 'colossal',
+    speed: 1.4,
+    radius: 0.7,
+    attack: { damage: 70, type: 'normal', range: 1.5, cooldown: 2.2, splash: 2 },
+    abilities: ['root', 'unload'],
+    garrison: true, // 등 위의 성채
+  },
 });
+
+/** 궁극 유닛인지 */
+export const isUltimate = (type) => Boolean(UNITS[type]?.ultimate);
 
 /** 왕실 근위병의 방패벽: 켜면 느려지는 대신 화살(관통 피해)에 강해진다 */
 export const SHIELD_WALL = Object.freeze({ speedMultiplier: 0.5, pierceTakenMultiplier: 0.4 });

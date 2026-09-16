@@ -151,7 +151,8 @@ test('병영이 있어야 성채 시대로 발전하고, 60초 뒤 시대가 오
 
   runSeconds(world, 61);
   assert.equal(player.age, 2);
-  assert.equal(command(world, 0, { type: CMD.AGE_UP }), REJECT.MAX_AGE);
+  // 왕국 시대는 성채 시대 건물 2종이 있어야 한다
+  assert.equal(command(world, 0, { type: CMD.AGE_UP }), REJECT.REQUIRES_BUILDING);
 });
 
 test('시장에서 목재를 사면 금 115가 빠지고 시세가 5% 오른다', () => {

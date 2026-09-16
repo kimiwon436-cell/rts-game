@@ -1,6 +1,7 @@
 import { PLAYER_COLORS, TILE_SIZE } from '@rune/shared/constants.js';
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { UNITS } from '@rune/shared/data/units.js';
+import { ABILITIES } from '@rune/shared/data/abilities.js';
 import { TerrainCache } from './terrain.js';
 import {
   drawBuilding,
@@ -46,6 +47,7 @@ export class Renderer {
     this.dragBox = null; // 화면 좌표 { x0, y0, x1, y1 }
     this.markers = [];
     this.attackCursor = null; // 공격 이동 지점을 고르는 중이면 마우스 위치 (타일 좌표)
+    this.castCursor = null; // 능력 쓸 곳을 고르는 중이면 { x, y, ability }
   }
 
   resize() {
@@ -80,6 +82,7 @@ export class Renderer {
     this.drawBuildings(ctx, view, timeMs);
     this.drawUnits(ctx, view, timeMs);
     this.drawHealthBars(ctx, view);
+    this.drawCastCursor(ctx, timeMs);
     this.drawSelection(ctx);
     this.drawEffects(ctx);
     this.drawGhost(ctx, timeMs);
@@ -170,7 +173,7 @@ export class Renderer {
   drawHealthBars(ctx, view) {
     for (const unit of this.world.units.values()) {
       const max = UNITS[unit.type].hp;
-      if (unit.hp >= max || this.selection.has(unit.id)) continue;
+      if (unit.hp >= max || unit.carried || this.selection.has(unit.id)) continue;
       const x = unit.drawX * S;
       const y = unit.drawY * S;
       if (!intersects(view, x - S, y - S, S * 2, S * 2)) continue;
@@ -187,6 +190,25 @@ export class Renderer {
   drawEffects(ctx) {
     const now = performance.now();
     this.world.effects = this.world.effects.filter((effect) => drawEffect(ctx, effect, now));
+  }
+
+  /** 능력 범위 미리보기 (성좌 붕괴·시간의 결계는 반경, 여명 돌격은 방향선) */
+  drawCastCursor(ctx, timeMs) {
+    const cursor = this.castCursor;
+    if (!cursor) return;
+    const ability = ABILITIES[cursor.ability];
+    const x = cursor.x * S;
+    const y = cursor.y * S;
+    ctx.strokeStyle = `rgba(160, 200, 255, ${0.7 + 0.25 * Math.sin(timeMs / 180)})`;
+    ctx.lineWidth = 2;
+    if (ability.radius) {
+      ctx.beginPath();
+      ctx.arc(x, y, ability.radius * S, 0, TAU);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, 8, 0, TAU);
+    ctx.stroke();
   }
 
   drawAttackCursor(ctx, timeMs) {

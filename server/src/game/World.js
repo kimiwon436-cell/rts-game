@@ -1,5 +1,6 @@
 import { UNITS } from '@rune/shared/data/units.js';
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
+import { ABILITIES } from '@rune/shared/data/abilities.js';
 import { POP_LIMIT, STARTING_RESOURCES, STARTING_WORKERS, WOOD_PER_TREE } from '@rune/shared/data/economy.js';
 import { MARKET } from '@rune/shared/data/market.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
@@ -83,6 +84,8 @@ export class World {
         collapseAt: null, // 왕관 몰락 카운트다운이 끝나는 틱
         defeated: false,
         defeatReason: null,
+        oath: null, // 'crown' | 'rune' | 'earth' — 한 번 맺으면 바꿀 수 없다
+        revive: null, // 솔라리온 부활 대기 { type, atTick }
       };
     }
 
@@ -132,6 +135,27 @@ export class World {
       chaseTick: -1,
       lastAttackerId: null, // 마지막으로 나를 때린 적 (반격용)
       shieldWall: false,
+      carrierId: null, // 아르카논 등에 타고 있으면 그 id
+
+      // 능력·상태 (abilities.js가 관리한다)
+      cooldowns: {}, // ability → 다시 쓸 수 있는 틱
+      stunUntil: 0,
+      slowUntil: 0,
+      channel: null, // { ability, endTick, x, y }
+      rooted: false,
+      rootingUntil: 0, // 뿌리내리는·뽑는 중이면 끝나는 틱
+      rootingTo: false,
+      garrison: [], // 등에 태운 유닛 id (아르카논)
+      queue: [], // 뿌리내린 아르카논의 생산 대기열
+      aura: null, // 이번 틱에 받는 오라 { damage, resist }
+
+      // 스냅샷에 나가는 파생 값
+      stunned: false,
+      slowed: false,
+      rooting: false,
+      channeling: false,
+      buffed: false,
+      extra: 0,
     };
     this.units.set(unit.id, unit);
     return unit;
@@ -311,9 +335,49 @@ export class World {
     return found.sort((a, b) => distance(a) - distance(b)).slice(0, count);
   }
 
+/**
+   * 등에 태운다. 유닛은 그대로 world.units에 남아 있고 자리만 등 위로 옮긴다.
+   * (탄 유닛은 피해를 받지 않고 움직이지도 않지만, 원거리 유닛은 등 위에서 쏜다)
+   */
+  boardUnit(carrier, unit) {
+    this.stopUnit(unit);
+    unit.carrierId = carrier.id;
+    unit.x = carrier.x;
+    unit.y = carrier.y;
+    unit.cooldown = 0;
+    carrier.garrison.push(unit.id);
+  }
+
+  /** 등에 탄 유닛을 모두 내린다. 태운 쪽 둘레의 서로 다른 빈 칸에 놓는다. */
+  unloadAll(carrier) {
+    const ids = carrier.garrison.filter((id) => this.units.has(id));
+    carrier.garrison = [];
+    const spots = this.destinationSlots(carrier.x, carrier.y, ids.length + 1);
+    ids.forEach((id, i) => {
+      const unit = this.units.get(id);
+      const spot = spots[i + 1] ?? spots[0] ?? [Math.floor(carrier.x), Math.floor(carrier.y)];
+      unit.carrierId = null;
+      unit.x = spot[0] + 0.5;
+      unit.y = spot[1] + 0.5;
+      unit.navVersion = -1;
+    });
+    return ids.length;
+  }
+
+  /** 등에 탄 유닛은 태운 쪽을 따라다닌다 */
+  moveGarrisonWithCarrier(carrier) {
+    for (const id of carrier.garrison) {
+      const unit = this.units.get(id);
+      if (!unit) continue;
+      unit.x = carrier.x;
+      unit.y = carrier.y;
+    }
+  }
+
   /** 사각형 안에 걸친 유닛을 가장 가까운 빈 칸으로 옮긴다 */
   ejectUnits(rect) {
     for (const unit of this.units.values()) {
+      if (unit.carrierId) continue;
       if (distanceToRect(unit.x, unit.y, rect) >= UNITS[unit.type].radius) continue;
       const spot = this.nearestFreeTile(unit.x, unit.y);
       if (!spot) continue;
@@ -412,7 +476,11 @@ export class World {
       p.pop = 0;
       p.popCap = 0;
     }
-    for (const u of this.units.values()) this.players[u.owner].pop += UNITS[u.type].pop;
+    for (const u of this.units.values()) {
+      this.players[u.owner].pop += UNITS[u.type].pop;
+      // 뿌리내린 아르카논은 전진 기지다: 인구 상한을 올려 준다
+      if (u.rooted) this.players[u.owner].popCap += ABILITIES.root.popCap;
+    }
     for (const b of this.buildings.values()) {
       if (b.complete) this.players[b.owner].popCap += BUILDINGS[b.type].pop ?? 0;
     }

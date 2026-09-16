@@ -3,6 +3,9 @@ import { BUILDINGS, BUILD_MENU } from '@rune/shared/data/buildings.js';
 import { AGES, MAX_AGE, RESOURCES, RESOURCE_NAMES } from '@rune/shared/data/economy.js';
 import { MARKET, buyCost, sellGain } from '@rune/shared/data/market.js';
 import { UNITS, WORKER } from '@rune/shared/data/units.js';
+import { ABILITIES, GARRISON } from '@rune/shared/data/abilities.js';
+import { OATHS } from '@rune/shared/data/oaths.js';
+import { TICK_MS } from '@rune/shared/constants.js';
 import { UNIT_STATE } from '@rune/shared/protocol.js';
 import { missingResource } from '@rune/shared/rules/costs.js';
 import { ARMOR_NAMES, ATTACK_TYPE_NAMES } from '@rune/shared/rules/combat.js';
@@ -234,19 +237,54 @@ function describeUnits(world, units, players) {
       action: { kind: 'shieldWall' },
     });
   }
+  if (units.length === 1 && def.abilities) model.buttons.push(...abilityButtons(world, first, def));
   model.buttons.push({ key: 'H', label: '정지', action: { kind: 'stop' } });
   return model;
 }
 
+/** 궁극 유닛의 능력 버튼. 재사용 대기가 남아 있으면 초를 보여 주고 누르지 못하게 한다. */
+function abilityButtons(world, unit, def) {
+  const ready = world.cooldowns.get(unit.id) ?? {};
+  return def.abilities
+    .map((id) => {
+      const ability = ABILITIES[id];
+      const remain = Math.max(0, Math.ceil(((ready[id] ?? 0) - world.serverTick) * (TICK_MS / 1000)));
+      if (id === 'unload' && !unit.extra) return null; // 태운 유닛이 없으면 숨긴다
+      const rooting = id === 'root' && unit.flags & 16;
+      return {
+        key: ability.hotkey,
+        label: id === 'root' && unit.rooted ? '뿌리 뽑기' : ability.name,
+        note: remain ? `${remain}초 뒤` : rooting ? '전환 중' : ability.desc,
+        disabled: remain > 0 || rooting,
+        action:
+          ability.kind === 'toggle'
+            ? { kind: 'toggleAbility', ability: id }
+            : ability.kind === 'point'
+              ? { kind: 'castTarget', ability: id }
+              : { kind: 'cast', ability: id },
+      };
+    })
+    .filter(Boolean);
+}
+
 function unitStats(def) {
   const { attack } = def;
-  return `공격 ${attack.damage} ${ATTACK_TYPE_NAMES[attack.type]} · 사거리 ${attack.range} · ${ARMOR_NAMES[def.armor]}`;
+  const base = `공격 ${attack.damage} ${ATTACK_TYPE_NAMES[attack.type]} · 사거리 ${attack.range} · ${ARMOR_NAMES[def.armor]}`;
+  return def.title ? `${def.title} · ${base}` : base;
 }
 
 function unitStatus(unit) {
   const state = STATE_TEXT[unit.state] ?? '';
-  if (!unit.carryKind || unit.carryAmount === 0) return state;
-  return `${state} · ${RESOURCE_NAMES[unit.carryKind]} ${unit.carryAmount}/${WORKER.carryCapacity}`;
+  const extras = [];
+  if (unit.channeling) extras.push('영창 중');
+  if (unit.rooted) extras.push('뿌리내림');
+  if (unit.stunned) extras.push('기절');
+  if (unit.slowed) extras.push('둔화');
+  if (UNITS[unit.type].garrison) extras.push(`탑승 ${unit.extra}/${GARRISON.capacity}`);
+  if (unit.carryKind && unit.carryAmount > 0) {
+    extras.push(`${RESOURCE_NAMES[unit.carryKind]} ${unit.carryAmount}/${WORKER.carryCapacity}`);
+  }
+  return [state, ...extras].filter(Boolean).join(' · ');
 }
 
 function groupStatus(units) {
@@ -279,9 +317,24 @@ function describeBuilding(world, b, players) {
   const me = world.me;
   model.buildingId = b.id;
 
+  // 맹세의 성소: 아직 맹세를 맺지 않았으면 셋 중 하나를 고른다
+  if (def.oathAltar && !world.myOath()) {
+    model.hint = '맹세는 한 경기에 한 번, 번복할 수 없습니다';
+    model.buttons.push(
+      ...Object.values(OATHS).map((oath, i) => ({
+        key: ['Q', 'W', 'E'][i],
+        label: oath.name,
+        note: `${UNITS[oath.unit].name} · ${oath.summary}`,
+        action: { kind: 'takeOath', oath: oath.id },
+      })),
+    );
+    return model;
+  }
+
   if (def.trains) {
     const keys = ['Q', 'W', 'E', 'R'];
-    def.trains.forEach((type, i) => {
+    const trains = def.trains.filter((type) => !UNITS[type].oath || UNITS[type].oath === world.myOath());
+    trains.forEach((type, i) => {
       const unit = UNITS[type];
       const locked = me.age < unit.age;
       model.buttons.push({
@@ -315,14 +368,23 @@ function describeBuilding(world, b, players) {
       model.buttons.push({ key: 'C', label: '발전 취소', note: '비용 전액 환불', action: { kind: 'cancelAgeUp' } });
     } else if (me.age < MAX_AGE) {
       const next = AGES[me.age + 1];
+      let missingNote = null;
       const missingBuilding = next.requires?.find((type) => !world.hasCompleted(type));
+      if (missingBuilding) missingNote = `${BUILDINGS[missingBuilding].name} 필요`;
+      if (next.requiresAny) {
+        const built = next.requiresAny.types.filter((type) => world.hasCompleted(type));
+        if (built.length < next.requiresAny.count) {
+          const names = next.requiresAny.types.map((type) => BUILDINGS[type].name).join('·');
+          missingNote = `${names} 중 ${next.requiresAny.count}종 필요`;
+        }
+      }
       model.buttons.push({
         key: 'U',
         label: `${next.name}로 발전`,
         cost: next.cost,
-        disabled: Boolean(missingBuilding),
-        short: !missingBuilding && missingResource(me, next.cost) !== null,
-        note: missingBuilding ? `${BUILDINGS[missingBuilding].name} 필요` : `${next.time}초`,
+        disabled: Boolean(missingNote),
+        short: !missingNote && missingResource(me, next.cost) !== null,
+        note: missingNote ?? `${next.time}초`,
         action: { kind: 'ageUp' },
       });
     }

@@ -5,7 +5,10 @@ const RESOLVE = 0.6; // 한 틱에 겹친 거리의 60%만 풀어 부드럽게 �
 
 /** 경제 일을 하는 농노는 서로 겹쳐도 된다 (금광·나무 앞 교통 체증 방지) */
 const ignoresCollision = (unit) =>
-  unit.order?.type === 'gather' || unit.order?.type === 'construct' || unit.order?.type === 'returnCargo';
+  Boolean(unit.carrierId) || // 등에 탄 유닛은 몸이 없다
+  unit.order?.type === 'gather' ||
+  unit.order?.type === 'construct' ||
+  unit.order?.type === 'returnCargo';
 
 const cellKey = (cx, cy) => cy * 4096 + cx;
 

@@ -1,4 +1,4 @@
-// 건물 능력치 — docs/GAME_DESIGN.md 5장 (MVP 건물 9종)
+// 건물 능력치 — docs/GAME_DESIGN.md 5장 (기본 9종 + 왕국 시대 맹세의 성소)
 // size: 정사각형 풋프린트 한 변의 타일 수, pop: 완성 시 늘어나는 인구 상한
 
 export const BUILDINGS = Object.freeze({
@@ -103,6 +103,18 @@ export const BUILDINGS = Object.freeze({
     market: true,
     hotkey: 'X',
   },
+  sanctum: {
+    id: 'sanctum',
+    name: '맹세의 성소',
+    age: 3,
+    size: 4,
+    cost: { gold: 300, wood: 300, mana: 300 },
+    buildTime: 80,
+    hp: 2000,
+    trains: ['solarion', 'etheria', 'arkanon'], // 맺은 맹세의 유닛만 뽑을 수 있다
+    oathAltar: true,
+    hotkey: 'C',
+  },
 });
 
 /** 건물 하나의 생산 대기열 최대 길이 */
@@ -122,4 +134,5 @@ export const BUILD_MENU = Object.freeze([
   'keep',
   'mage_tower',
   'market',
+  'sanctum',
 ]);

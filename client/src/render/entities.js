@@ -430,10 +430,159 @@ const UNIT_ART = {
     ctx.fillStyle = '#3f4796';
     polygon(ctx, [[x - 6, y - 8 + bob], [x + f, y - 20 + bob], [x + 6, y - 8 + bob]]);
   },
+
+  // ---------- 맹세의 궁극 유닛 ----------
+
+  solarion(ctx, u, color, t) {
+    const { x, y, bob, f } = frameOf(u, t, 70);
+    const glow = 0.55 + 0.45 * Math.sin(t / 320);
+    footShadow(ctx, x, y + 2, 15);
+
+    // 새벽의 오라
+    ctx.strokeStyle = `rgba(246, 206, 110, ${0.25 + glow * 0.25})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(x, y + 8, 26, 13, 0, 0, TAU);
+    ctx.stroke();
+
+    // 군마
+    ctx.fillStyle = '#e8e2d4';
+    ellipse(ctx, x, y - 6 + bob, 15, 9);
+    ctx.fillStyle = '#d8d0bd';
+    polygon(ctx, [[x + 13 * f, y - 10 + bob], [x + 21 * f, y - 16 + bob], [x + 19 * f, y - 4 + bob]]);
+    ctx.fillStyle = '#3a342d';
+    ctx.fillRect(x - 12, y + 1 + bob, 3, 9);
+    ctx.fillRect(x + 8, y + 1 + bob, 3, 9);
+
+    // 기사왕
+    ctx.fillStyle = color;
+    polygon(ctx, [[x - 9, y - 12 + bob], [x, y - 30 + bob], [x + 9, y - 12 + bob]]);
+    ctx.fillStyle = '#f6ce6e';
+    circle(ctx, x, y - 30 + bob, 5.5);
+    polygon(ctx, [[x - 6, y - 34 + bob], [x - 4, y - 41 + bob], [x, y - 36 + bob], [x + 4, y - 41 + bob], [x + 6, y - 34 + bob]]); // 왕관
+    stroke(ctx, x + 6 * f, y - 26 + bob, x + 24 * f, y - 34 + bob, '#f2efe6', 3); // 창
+    ctx.fillStyle = `rgba(255, 236, 170, ${glow})`;
+    circle(ctx, x + 25 * f, y - 35 + bob, 4);
+  },
+
+  etheria(ctx, u, color, t) {
+    const { x, y, f } = frameOf(u, t);
+    const float = Math.sin(t / 420 + u.id) * 3;
+    const spin = t / 700;
+    footShadow(ctx, x, y + 4, 9);
+
+    // 주변을 도는 별
+    for (let i = 0; i < 3; i++) {
+      const a = spin + (i / 3) * TAU;
+      ctx.fillStyle = `rgba(190, 205, 255, ${0.5 + 0.4 * Math.sin(spin * 2 + i)})`;
+      circle(ctx, x + Math.cos(a) * 17, y - 18 + float + Math.sin(a) * 7, 2.6);
+    }
+
+    ctx.fillStyle = '#2b2f5c'; // 로브
+    polygon(ctx, [[x - 11, y + 8 + float], [x - 5, y - 16 + float], [x + 5, y - 16 + float], [x + 11, y + 8 + float]]);
+    ctx.fillStyle = color;
+    polygon(ctx, [[x - 7, y + 6 + float], [x - 3, y - 12 + float], [x + 3, y - 12 + float], [x + 7, y + 6 + float]]);
+    ctx.fillStyle = SKIN;
+    circle(ctx, x, y - 19 + float, 4.2);
+    ctx.fillStyle = '#8ea2ff'; // 별관
+    polygon(ctx, [[x - 7, y - 21 + float], [x, y - 33 + float], [x + 7, y - 21 + float]]);
+    stroke(ctx, x + 9 * f, y + 6 + float, x + 9 * f, y - 26 + float, '#6d5b3f', 2); // 지팡이
+    const pulse = 0.55 + 0.45 * Math.sin(t / 240);
+    ctx.fillStyle = `rgba(160, 190, 255, ${pulse})`;
+    circle(ctx, x + 9 * f, y - 30 + float, 4.5 + pulse * 1.5);
+  },
+
+  arkanon(ctx, u, color, t) {
+    const { x, y, bob } = frameOf(u, t, 160);
+    const rooted = u.rooted;
+    footShadow(ctx, x, y + 6, 26);
+
+    if (rooted) {
+      ctx.fillStyle = 'rgba(86, 116, 78, 0.75)'; // 뿌리
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TAU;
+        polygon(ctx, [
+          [x + Math.cos(a) * 12, y + 8],
+          [x + Math.cos(a) * 30, y + 12 + Math.sin(a) * 6],
+          [x + Math.cos(a) * 14, y + 14],
+        ]);
+      }
+    }
+
+    ctx.fillStyle = '#4b6b52'; // 다리
+    ellipse(ctx, x - 17, y + 6 + bob, 6, 4);
+    ellipse(ctx, x + 17, y + 6 + bob, 6, 4);
+    ctx.fillStyle = '#5d7f61'; // 머리
+    ellipse(ctx, x + 22, y - 6 + bob, 8, 6);
+    ctx.fillStyle = '#1d2a22';
+    circle(ctx, x + 25, y - 8 + bob, 1.6);
+
+    ctx.fillStyle = '#6b6152'; // 등껍질
+    ellipse(ctx, x, y - 8 + bob, 24, 16);
+    ctx.fillStyle = '#4a4436';
+    for (let i = -1; i <= 1; i++) circle(ctx, x + i * 11, y - 10 + bob, 5);
+
+    // 등 위의 성채
+    ctx.fillStyle = '#8d8370';
+    ctx.fillRect(x - 13, y - 34 + bob, 26, 16);
+    ctx.fillStyle = color;
+    ctx.fillRect(x - 13, y - 38 + bob, 26, 5);
+    ctx.fillStyle = '#6f6656';
+    for (let i = 0; i < 4; i++) ctx.fillRect(x - 13 + i * 7, y - 42 + bob, 4, 5);
+    flag(ctx, x + 14, y - 52 + bob, color);
+  },
 };
 
 export function drawUnit(ctx, u, color, t) {
+  if (u.carried) return; // 등에 탄 유닛은 태운 쪽 위에 겹쳐 그리지 않는다
+  if (u.buffed) drawAuraMark(ctx, u);
   (UNIT_ART[u.type] ?? drawPeasant)(ctx, u, color, t);
+  drawUnitStatus(ctx, u, t);
+}
+
+/** 새벽의 오라를 받는 아군 발밑 표시 */
+function drawAuraMark(ctx, u) {
+  const x = u.drawX * S;
+  const y = u.drawY * S;
+  ctx.strokeStyle = 'rgba(246, 206, 110, 0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.ellipse(x, y + 8, 12, 6, 0, 0, TAU);
+  ctx.stroke();
+}
+
+/** 기절·둔화·영창·탑승 같은 상태 표시 */
+function drawUnitStatus(ctx, u, t) {
+  const x = u.drawX * S;
+  const y = u.drawY * S;
+
+  if (u.slowed) {
+    ctx.fillStyle = 'rgba(140, 170, 255, 0.28)';
+    circle(ctx, x, y - 4, 14);
+  }
+  if (u.stunned) {
+    for (let i = 0; i < 3; i++) {
+      const a = t / 220 + (i / 3) * TAU;
+      ctx.fillStyle = 'rgba(255, 232, 150, 0.95)';
+      circle(ctx, x + Math.cos(a) * 11, y - 34 + Math.sin(a) * 4, 2.4);
+    }
+  }
+  if (u.channeling) {
+    const total = 50; // 성좌 붕괴 2.5초 = 50틱
+    const left = Math.max(0, Math.min(1, u.extra / total));
+    ctx.fillStyle = 'rgba(10, 12, 16, 0.7)';
+    ctx.fillRect(x - 16, y - 46, 32, 5);
+    ctx.fillStyle = '#8ea2ff';
+    ctx.fillRect(x - 16, y - 46, 32 * (1 - left), 5);
+  }
+  if (u.extra > 0 && !u.channeling) {
+    ctx.font = '600 11px "IBM Plex Sans KR", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(10, 12, 16, 0.72)';
+    ctx.fillRect(x + 14, y - 48, 20, 14);
+    ctx.fillStyle = '#f2eee4';
+    ctx.fillText(`${u.extra}`, x + 24, y - 37);
+  }
 }
 
 /** 집결지 깃발과 건물에서 이어지는 점선 */
@@ -500,6 +649,75 @@ export function drawEffect(ctx, effect, now) {
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(x, y - 4, 9 + t * 3, -2.4, -0.6);
+    ctx.stroke();
+    return true;
+  }
+
+  if (effect.kind === 'charge') {
+    if (t >= 1) return false;
+    const fade = 1 - t;
+    ctx.strokeStyle = `rgba(255, 224, 150, ${0.75 * fade})`;
+    ctx.lineWidth = 10 * fade + 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(effect.from.x * S, effect.from.y * S);
+    ctx.lineTo(effect.to.x * S, effect.to.y * S);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    return true;
+  }
+
+  if (effect.kind === 'starfallCast') {
+    if (t >= 1) return false;
+    const r = effect.radius * S;
+    ctx.strokeStyle = `rgba(150, 175, 255, ${0.5 + 0.4 * Math.sin(now / 90)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.stroke();
+    ctx.fillStyle = `rgba(120, 150, 255, ${0.08 + 0.12 * t})`;
+    circle(ctx, x, y, r * t);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * TAU + now / 800;
+      const d = r * (1 - t);
+      ctx.fillStyle = 'rgba(210, 225, 255, 0.9)';
+      circle(ctx, x + Math.cos(a) * d, y + Math.sin(a) * d - 40 * (1 - t), 2.5);
+    }
+    return true;
+  }
+
+  if (effect.kind === 'starfallHit') {
+    if (t >= 1) return false;
+    const r = effect.radius * S;
+    ctx.fillStyle = `rgba(190, 210, 255, ${0.55 * (1 - t)})`;
+    circle(ctx, x, y, r * (0.6 + t * 0.4));
+    ctx.strokeStyle = `rgba(255, 255, 255, ${1 - t})`;
+    ctx.lineWidth = 3 * (1 - t) + 1;
+    ctx.beginPath();
+    ctx.arc(x, y, r * (0.7 + t * 0.5), 0, TAU);
+    ctx.stroke();
+    return true;
+  }
+
+  if (effect.kind === 'ward') {
+    if (t >= 1) return false;
+    const r = effect.radius * S;
+    ctx.strokeStyle = `rgba(150, 190, 255, ${0.45 * (1 - t) + 0.2})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.stroke();
+    ctx.fillStyle = `rgba(120, 160, 255, ${0.12 * (1 - t)})`;
+    circle(ctx, x, y, r);
+    return true;
+  }
+
+  if (effect.kind === 'rootBurst') {
+    if (t >= 1) return false;
+    ctx.strokeStyle = `rgba(126, 192, 138, ${1 - t})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x, y + 8, 20 + t * 26, 0, TAU);
     ctx.stroke();
     return true;
   }

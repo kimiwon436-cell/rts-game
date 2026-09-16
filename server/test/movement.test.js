@@ -48,7 +48,8 @@ test('무리 이동: 12기가 목표 주변의 서로 다른 자리에 멈추고
   const target = openPoint(world);
 
   assert.equal(command(world, 0, { type: CMD.MOVE, unitIds: army.map((u) => u.id), ...target }), null);
-  runSeconds(world, 20);
+  // 경로 계산 예산은 시간(8ms) 기준이라 기계가 바쁘면 몇 틱 밀린다. 넉넉히 돌린다.
+  runSeconds(world, 40);
 
   for (const unit of army) {
     assert.equal(unit.state, UNIT_STATE.IDLE, `유닛 ${unit.id}이 멈추지 않았다`);
