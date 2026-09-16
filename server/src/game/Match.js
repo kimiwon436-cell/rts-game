@@ -1,9 +1,10 @@
 import { TICK_MS } from '@rune/shared/constants.js';
 import { loadMap } from '@rune/shared/map/maps/index.js';
-import { EV, REJECT } from '@rune/shared/protocol.js';
+import { EV, REJECT, VICTORY_REASON } from '@rune/shared/protocol.js';
 import { World } from './World.js';
 import { stepWorld } from './Simulation.js';
 import { sanitizeCommand } from './systems/commands.js';
+import { defeatPlayer } from './systems/victory.js';
 import { buildSharedFrame, snapshotFor } from './sync/snapshot.js';
 
 const MAX_CATCH_UP = 5;
@@ -18,10 +19,13 @@ export class Match {
    * @param {string} p.mapId
    * @param {Array<{ uid: string, nickname: string, slot: number }>} p.players
    * @param {(uid: string) => import('socket.io').Socket | undefined} p.getSocket
+   * @param {(result: object) => void} [p.onEnd] 경기가 끝나면 한 번 불린다
    */
-  constructor({ roomId, mapId, players, getSocket }) {
+  constructor({ roomId, mapId, players, getSocket, onEnd }) {
     this.roomId = roomId;
     this.getSocket = getSocket;
+    this.onEnd = onEnd;
+    this.ended = false;
     this.world = new World(loadMap(mapId), players);
     this.slotOfUid = new Map(players.map((p) => [p.uid, p.slot]));
     this.uidOfSlot = new Map(players.map((p) => [p.slot, p.uid]));
@@ -38,12 +42,13 @@ export class Match {
     const loop = () => {
       if (!this.running) return;
       let steps = 0;
-      while (performance.now() >= next && steps < MAX_CATCH_UP) {
+      while (this.running && performance.now() >= next && steps < MAX_CATCH_UP) {
         this.step();
         next += TICK_MS;
         steps++;
       }
       if (steps === MAX_CATCH_UP) next = performance.now(); // 너무 밀리면 따라잡기를 포기한다
+      if (!this.running) return;
       this.timer = setTimeout(loop, Math.max(0, next - performance.now()));
       this.timer.unref?.();
     };
@@ -72,9 +77,11 @@ export class Match {
     this.queue.push({ slot, cmd });
   }
 
-  /** 경기에서 나간 플레이어. 유닛과 건물은 남고, 명령과 스냅샷만 끊긴다. */
+  /** 경기 중에 나간 플레이어는 패배한다. 다음 틱에 결과가 정해진다. (연결이 끊겼을 때의 재접속 유예는 3-5) */
   removePlayer(uid) {
+    const slot = this.slotOfUid.get(uid);
     this.slotOfUid.delete(uid);
+    if (slot !== undefined && !this.ended) defeatPlayer(this.world, this.world.players[slot], VICTORY_REASON.LEFT);
   }
 
   step() {
@@ -87,6 +94,24 @@ export class Match {
     for (const [uid, slot] of this.slotOfUid) {
       this.getSocket(uid)?.emit(EV.GAME_SNAP, snapshotFor(frame, this.world, slot));
     }
+    if (this.world.result && !this.ended) this.finish();
+  }
+
+  /** 결과를 남은 플레이어에게 보내고 틱을 멈춘다 */
+  finish() {
+    this.ended = true;
+    this.stop();
+    const { winner, reason, tick } = this.world.result;
+    const result = {
+      winner,
+      reason,
+      durationSec: Math.round((tick * TICK_MS) / 1000),
+      players: this.world.players
+        .filter(Boolean)
+        .map((p) => ({ slot: p.slot, nickname: p.nickname, defeated: p.defeated })),
+    };
+    for (const uid of this.slotOfUid.keys()) this.getSocket(uid)?.emit(EV.GAME_END, result);
+    this.onEnd?.(result);
   }
 
   sendReject(uid, seq, reason) {

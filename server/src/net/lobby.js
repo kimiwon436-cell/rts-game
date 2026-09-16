@@ -200,11 +200,24 @@ export class Lobby {
       mapId: room.mapId,
       players: payload.players,
       getSocket: (uid) => this.socketOfUid.get(uid),
+      onEnd: (result) => this.endGame(room, result),
     });
     room.match.start();
     this.broadcastRoom(room);
     this.broadcastList();
     console.log(`[게임 시작] ${room.id} ${payload.players.map((p) => `${p.nickname}(${p.uid})`).join(' vs ')}`);
+  }
+
+  /** 경기가 끝나면 방을 대기 상태로 되돌린다. 같은 방에서 다시 준비해 재대결할 수 있다. */
+  endGame(room, result) {
+    if (this.rooms.get(room.id) !== room) return;
+    room.match = null;
+    room.status = ROOM_STATUS.WAITING;
+    for (const player of room.players) player.ready = false;
+    this.broadcastRoom(room);
+    this.broadcastList();
+    const winner = result.players.find((p) => p.slot === result.winner);
+    console.log(`[게임 종료] ${room.id} 승자=${winner?.nickname ?? '없음'} (${result.reason}, ${result.durationSec}초)`);
   }
 
   /** 서버를 닫을 때 진행 중인 카운트다운과 경기를 모두 멈춘다 */

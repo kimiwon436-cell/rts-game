@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { io as connect } from 'socket.io-client';
-import { EV, ERR, ROOM_STATUS } from '@rune/shared/protocol.js';
+import { CMD, EV, ERR, ROOM_STATUS, VICTORY_REASON } from '@rune/shared/protocol.js';
 import { createGameServer } from '../src/app.js';
 
 let server;
@@ -89,4 +89,27 @@ test('같은 계정으로 다시 접속하면 이전 소켓이 끊긴다', async
   const replaced = once(first, EV.SESSION_REPLACED);
   await connected(player('erin'));
   await replaced;
+});
+
+test('항복하면 두 플레이어에게 결과가 가고, 방은 다시 대기 상태가 된다', async () => {
+  const frank = await connected(player('frank'));
+  const gina = await connected(player('gina'));
+  const { room } = await frank.emitWithAck(EV.LOBBY_CREATE, { name: '항복 시험' });
+  await gina.emitWithAck(EV.LOBBY_JOIN, { roomId: room.id });
+
+  const started = Promise.all([once(frank, EV.GAME_START), once(gina, EV.GAME_START)]);
+  await frank.emitWithAck(EV.LOBBY_READY, { ready: true });
+  await gina.emitWithAck(EV.LOBBY_READY, { ready: true });
+  const [[start]] = await started;
+
+  const ended = Promise.all([once(frank, EV.GAME_END), once(gina, EV.GAME_END)]);
+  frank.emit(EV.GAME_CMD, { seq: 1, type: CMD.SURRENDER });
+  const [[resultA], [resultB]] = await ended;
+
+  assert.equal(resultA.winner, start.players.find((p) => p.nickname === 'gina').slot);
+  assert.equal(resultA.reason, VICTORY_REASON.SURRENDER);
+  assert.deepEqual(resultA, resultB);
+  const after = server.lobby.rooms.get(room.id);
+  assert.equal(after.status, ROOM_STATUS.WAITING);
+  assert.ok(after.players.every((p) => !p.ready));
 });

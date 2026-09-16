@@ -251,7 +251,7 @@ export function drawBuilding(ctx, b, color, t, age) {
 
 // ---------- 유닛 ----------
 
-export function drawUnit(ctx, u, color, t) {
+function drawPeasant(ctx, u, color, t) {
   const x = u.drawX * S;
   const y = u.drawY * S;
   const walking = u.state === UNIT_STATE.MOVE || u.state === UNIT_STATE.RETURN;
@@ -291,6 +291,239 @@ export function drawUnit(ctx, u, color, t) {
     ctx.fillStyle = '#8b5a2b';
     ctx.fillRect(x - 10, y - 6 + bob, 4, 11);
   }
+}
+
+const SKIN = '#e6c09a';
+const STEEL = '#b8bec6';
+
+/** 그리는 위치와 걷기 흔들림, 바라보는 방향(1 오른쪽, -1 왼쪽) */
+function frameOf(u, t, stride = 90) {
+  const walking = u.state === UNIT_STATE.MOVE || u.state === UNIT_STATE.RETURN;
+  return {
+    x: u.drawX * S,
+    y: u.drawY * S,
+    bob: walking ? Math.sin(t / stride + u.id) * 1.5 : 0,
+    f: u.facing ?? 1,
+  };
+}
+
+function footShadow(ctx, x, y, rx) {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  ellipse(ctx, x, y + 8, rx, rx * 0.42);
+}
+
+function torso(ctx, x, y, r, color) {
+  ctx.fillStyle = color;
+  circle(ctx, x, y, r);
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function stroke(ctx, x1, y1, x2, y2, color, width) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+
+const UNIT_ART = {
+  peasant: drawPeasant,
+
+  pikeman(ctx, u, color, t) {
+    const { x, y, bob, f } = frameOf(u, t);
+    footShadow(ctx, x, y, 8);
+    stroke(ctx, x + 7 * f, y + 9 + bob, x - 3 * f, y - 22 + bob, '#7a5634', 2);
+    ctx.fillStyle = STEEL;
+    polygon(ctx, [[x - 3 * f, y - 25 + bob], [x - 5.5 * f, y - 17 + bob], [x - 0.5 * f, y - 18 + bob]]);
+    torso(ctx, x, y + bob, 7, color);
+    ctx.fillStyle = SKIN;
+    circle(ctx, x, y - 7 + bob, 4.3);
+    ctx.fillStyle = '#9aa0a6';
+    ellipse(ctx, x, y - 9.5 + bob, 5, 2.6);
+  },
+
+  longbowman(ctx, u, color, t) {
+    const { x, y, bob, f } = frameOf(u, t);
+    footShadow(ctx, x, y, 7.5);
+    torso(ctx, x, y + bob, 6.5, color);
+    ctx.fillStyle = SKIN;
+    circle(ctx, x, y - 7 + bob, 4.2);
+    ctx.fillStyle = '#3f6b3a';
+    polygon(ctx, [[x - 5, y - 7 + bob], [x, y - 14 + bob], [x + 5, y - 7 + bob]]);
+    const cx = x + 3 * f;
+    const cy = y - 2 + bob;
+    const start = f > 0 ? -1.1 : Math.PI - 1.1;
+    ctx.strokeStyle = '#8b5a2b';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 9, start, start + 2.2);
+    ctx.stroke();
+    stroke(ctx, cx + Math.cos(start) * 9, cy + Math.sin(start) * 9, cx + Math.cos(start + 2.2) * 9, cy + Math.sin(start + 2.2) * 9, 'rgba(240, 235, 220, 0.7)', 1);
+  },
+
+  scout_rider(ctx, u, color, t) {
+    const { x, y, f } = frameOf(u, t);
+    const gallop = u.state === UNIT_STATE.MOVE ? Math.sin(t / 60 + u.id) * 1.2 : 0;
+    footShadow(ctx, x, y, 12);
+    ctx.fillStyle = '#8a6a45';
+    ellipse(ctx, x, y + 2 + gallop, 12, 6);
+    ctx.fillStyle = '#6f5436';
+    ellipse(ctx, x + 10 * f, y - 3 + gallop, 4.5, 3.5);
+    torso(ctx, x - f, y - 6 + gallop, 5.5, color);
+    ctx.fillStyle = SKIN;
+    circle(ctx, x - f, y - 13 + gallop, 3.6);
+  },
+
+  knight(ctx, u, color, t) {
+    const { x, y, f } = frameOf(u, t);
+    const gallop = u.state === UNIT_STATE.MOVE ? Math.sin(t / 70 + u.id) * 1.2 : 0;
+    footShadow(ctx, x, y, 14);
+    ctx.fillStyle = '#d8d2c4';
+    ellipse(ctx, x, y + 2 + gallop, 13.5, 6.5);
+    ctx.fillStyle = color;
+    ctx.fillRect(x - 10, y + gallop, 20, 4);
+    ctx.fillStyle = '#c9c2b2';
+    ellipse(ctx, x + 12 * f, y - 4 + gallop, 5, 3.8);
+    stroke(ctx, x - 6 * f, y - 4 + gallop, x + 20 * f, y - 12 + gallop, '#7a5634', 2);
+    torso(ctx, x - f, y - 7 + gallop, 6, '#aab1ba');
+    ctx.fillStyle = color;
+    ctx.fillRect(x - 3 - f, y - 8 + gallop, 6, 3);
+    ctx.fillStyle = '#8d949c';
+    circle(ctx, x - f, y - 14 + gallop, 4.2);
+  },
+
+  royal_guard(ctx, u, color, t) {
+    const { x, y, bob, f } = frameOf(u, t, 120);
+    footShadow(ctx, x, y, 9);
+    torso(ctx, x, y + bob, 8, '#8d949c');
+    ctx.fillStyle = color;
+    ctx.fillRect(x - 2.5, y - 6 + bob, 5, 13);
+    ctx.fillStyle = '#9aa0a6';
+    circle(ctx, x, y - 8 + bob, 4.6);
+    // 방패벽을 켜면 방패가 커지고 테두리가 두꺼워진다
+    const wall = u.shieldWall;
+    const shieldW = wall ? 12 : 9;
+    const shieldH = wall ? 18 : 14;
+    const shieldX = f > 0 ? x + 3 : x - 3 - shieldW;
+    const shieldY = y - (wall ? 9 : 6) + bob;
+    ctx.fillStyle = color;
+    ctx.fillRect(shieldX, shieldY, shieldW, shieldH);
+    ctx.strokeStyle = '#e2b53e';
+    ctx.lineWidth = wall ? 2.5 : 1.5;
+    ctx.strokeRect(shieldX + 0.75, shieldY + 0.75, shieldW - 1.5, shieldH - 1.5);
+  },
+
+  battlemage(ctx, u, color, t) {
+    const { x, y, bob, f } = frameOf(u, t);
+    const pulse = 0.5 + 0.5 * Math.sin(t / 250 + u.id);
+    footShadow(ctx, x, y, 7.5);
+    stroke(ctx, x + 7 * f, y + 8 + bob, x + 7 * f, y - 16 + bob, '#5a3d2a', 2);
+    ctx.fillStyle = `rgba(150, 195, 255, ${0.6 + pulse * 0.4})`;
+    circle(ctx, x + 7 * f, y - 18 + bob, 3 + pulse);
+    ctx.fillStyle = color;
+    polygon(ctx, [[x - 7, y + 8 + bob], [x, y - 6 + bob], [x + 7, y + 8 + bob]]);
+    ctx.fillStyle = SKIN;
+    circle(ctx, x, y - 7 + bob, 4);
+    ctx.fillStyle = '#3f4796';
+    polygon(ctx, [[x - 6, y - 8 + bob], [x + f, y - 20 + bob], [x + 6, y - 8 + bob]]);
+  },
+};
+
+export function drawUnit(ctx, u, color, t) {
+  (UNIT_ART[u.type] ?? drawPeasant)(ctx, u, color, t);
+}
+
+/** 집결지 깃발과 건물에서 이어지는 점선 */
+export function drawRally(ctx, building, rally, color) {
+  const bx = (building.x + building.size / 2) * S;
+  const by = (building.y + building.size / 2) * S;
+  const rx = rally.x * S;
+  const ry = rally.y * S;
+  ctx.strokeStyle = 'rgba(240, 235, 220, 0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 5]);
+  ctx.beginPath();
+  ctx.moveTo(bx, by);
+  ctx.lineTo(rx, ry);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  ellipse(ctx, rx, ry + 1, 5, 2);
+  flag(ctx, rx, ry - 22, color);
+}
+
+/**
+ * 전투 효과 하나를 그린다. 끝났으면 false를 돌려준다.
+ * effect 좌표는 타일 단위 (ClientWorld.addCombatEffect)
+ */
+export function drawEffect(ctx, effect, now) {
+  const t = (now - effect.start) / effect.duration;
+
+  if (effect.kind === 'arrow') {
+    if (t >= 1) return false;
+    const x = (effect.from.x + (effect.to.x - effect.from.x) * t) * S;
+    const y = (effect.from.y + (effect.to.y - effect.from.y) * t) * S - Math.sin(Math.PI * t) * 14;
+    const angle = Math.atan2(effect.to.y - effect.from.y, effect.to.x - effect.from.x);
+    stroke(ctx, x - Math.cos(angle) * 6, y - Math.sin(angle) * 6, x + Math.cos(angle) * 5, y + Math.sin(angle) * 5, '#efe3c6', 1.5);
+    return true;
+  }
+
+  if (effect.kind === 'bolt') {
+    if (t < 1) {
+      const x = (effect.from.x + (effect.to.x - effect.from.x) * t) * S;
+      const y = (effect.from.y + (effect.to.y - effect.from.y) * t) * S - 6;
+      ctx.fillStyle = 'rgba(140, 190, 255, 0.35)';
+      circle(ctx, x, y, 7);
+      ctx.fillStyle = '#cfe2ff';
+      circle(ctx, x, y, 3.5);
+      return true;
+    }
+    if (t >= 1.5) return false;
+    const k = (t - 1) / 0.5; // 착탄 후 범위 피해 고리
+    ctx.strokeStyle = `rgba(150, 195, 255, ${1 - k})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(effect.to.x * S, effect.to.y * S, 4 + Math.max(0.5, effect.splash) * S * k, 0, TAU);
+    ctx.stroke();
+    return true;
+  }
+
+  if (t >= 1) return false;
+  const x = effect.x * S;
+  const y = effect.y * S;
+
+  if (effect.kind === 'slash') {
+    ctx.strokeStyle = `rgba(255, 250, 235, ${1 - t})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y - 4, 9 + t * 3, -2.4, -0.6);
+    ctx.stroke();
+    return true;
+  }
+
+  if (effect.kind === 'death') {
+    ctx.fillStyle = `rgba(70, 62, 56, ${0.55 * (1 - t)})`;
+    circle(ctx, x - 3, y, 6 + t * 9);
+    circle(ctx, x + 4, y - 3, 4 + t * 7);
+    return true;
+  }
+
+  if (effect.kind === 'rubble') {
+    const half = (effect.size * S) / 2;
+    ctx.fillStyle = `rgba(52, 46, 40, ${0.75 * (1 - t)})`;
+    ctx.fillRect(x - half + 4, y - half + 4, half * 2 - 8, half * 2 - 8);
+    ctx.fillStyle = `rgba(150, 140, 125, ${0.45 * (1 - t)})`;
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * TAU;
+      circle(ctx, x + Math.cos(a) * half * 0.6 * (0.5 + t), y + Math.sin(a) * half * 0.5 * (0.5 + t) - t * 14, 8 + t * 14);
+    }
+    return true;
+  }
+
+  return false;
 }
 
 export function drawSelectionRing(ctx, x, y, rx, mine) {

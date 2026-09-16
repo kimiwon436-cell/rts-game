@@ -197,11 +197,16 @@ button, input { font: inherit; color: inherit; }
   color: var(--text-soft);
 }
 .hud-info .mono { color: var(--text); }
-.hud-banner {
+.hud-banners {
   position: absolute;
   top: 54px;
   left: 50%;
   transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+.hud-banner {
   padding: 7px 16px;
   background: rgba(12, 14, 19, 0.94);
   border: 1px solid #5e4d1d;
@@ -305,6 +310,67 @@ button, input { font: inherit; color: inherit; }
 .c-wood { color: #c69157; }
 .c-mana { color: #8fb6ff; }
 .cc-btn.is-short .cc-cost span { color: #f08a80; }
+.hud-banner.is-danger { border-color: #7a3630; color: #f08a80; }
+
+/* ---------- 항복 확인과 경기 결과 ---------- */
+.btn-danger { background: #8f3a33; border-color: #a8443c; color: #fff4f1; }
+.btn-danger:hover { background: #a8443c; border-color: #bf5147; }
+.hud-right { position: relative; }
+.confirm {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 5;
+  width: 230px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: rgba(14, 16, 22, 0.97);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  font-size: 13.5px;
+  color: var(--text);
+}
+.confirm p { margin: 0; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.result-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(6, 8, 12, 0.62);
+  pointer-events: auto;
+}
+.result-panel {
+  width: min(440px, 100%);
+  display: grid;
+  gap: 8px;
+  padding: 26px 24px 22px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  text-align: center;
+}
+.result-kicker { margin: 0; font-family: var(--f-display); font-weight: 700; font-size: 36px; line-height: 1.1; color: #f08a80; }
+.result-kicker.is-win { color: var(--gold); }
+.result-title { margin: 0; font-family: var(--f-display); font-weight: 700; font-size: 20px; }
+.result-reason { margin: 0; font-size: 13.5px; color: var(--text-soft); }
+.result-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 10px; }
+
+.cc-queue { display: flex; flex-wrap: wrap; gap: 4px; }
+.cc-queue-item {
+  padding: 1px 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.cc-queue-item:first-child { border-color: #a27a28; }
+.cc-queue-item:hover { border-color: #f08a80; color: #f08a80; text-decoration: line-through; }
 @media (max-width: 1180px) { .hud-info { display: none; } }
 @media (max-width: 860px) {
   .command-card { left: 222px; right: 12px; transform: none; grid-template-columns: minmax(0, 1fr); }

@@ -23,6 +23,8 @@ const MESSAGES = {
   [REJECT.AGE_IN_PROGRESS]: '이미 시대를 발전하고 있습니다.',
   [REJECT.MAX_AGE]: '더 발전할 수 없습니다.',
   [REJECT.NO_MARKET]: '완성된 시장이 필요합니다.',
+  [REJECT.QUEUE_FULL]: '생산 대기열이 가득 찼습니다.',
+  [REJECT.CANNOT_ATTACK]: '선택한 유닛으로는 그 대상을 공격할 수 없습니다.',
   [REJECT.OUT_OF_BOUNDS]: '맵 밖에는 지을 수 없습니다.',
   [REJECT.BLOCKED]: '그 자리는 막혀 있습니다.',
   [REJECT.NEEDS_WELL]: '룬 오벨리스크는 마나 샘 위에만 지을 수 있습니다.',

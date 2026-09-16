@@ -2,12 +2,21 @@ import { PLAYER_COLORS, TILE_SIZE } from '@rune/shared/constants.js';
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { UNITS } from '@rune/shared/data/units.js';
 import { TerrainCache } from './terrain.js';
-import { drawBuilding, drawGoldMine, drawHealthBar, drawLabel, drawSelectionRing, drawUnit } from './entities.js';
+import {
+  drawBuilding,
+  drawEffect,
+  drawGoldMine,
+  drawHealthBar,
+  drawLabel,
+  drawRally,
+  drawSelectionRing,
+  drawUnit,
+} from './entities.js';
 
 const S = TILE_SIZE;
 const TAU = Math.PI * 2;
 const MARKER_MS = 550;
-const MARKER_COLORS = { move: '120, 230, 140', work: '226, 181, 62', place: '226, 181, 62' };
+const MARKER_COLORS = { move: '120, 230, 140', work: '226, 181, 62', place: '226, 181, 62', attack: '235, 90, 80' };
 
 const intersects = (rect, x, y, w, h) => x < rect.x + rect.w && x + w > rect.x && y < rect.y + rect.h && y + h > rect.y;
 
@@ -36,6 +45,7 @@ export class Renderer {
     this.ghost = null; // { type, x, y, valid }
     this.dragBox = null; // 화면 좌표 { x0, y0, x1, y1 }
     this.markers = [];
+    this.attackCursor = null; // 공격 이동 지점을 고르는 중이면 마우스 위치 (타일 좌표)
   }
 
   resize() {
@@ -69,9 +79,12 @@ export class Renderer {
     this.drawWells(ctx, view, timeMs);
     this.drawBuildings(ctx, view, timeMs);
     this.drawUnits(ctx, view, timeMs);
+    this.drawHealthBars(ctx, view);
     this.drawSelection(ctx);
+    this.drawEffects(ctx);
     this.drawGhost(ctx, timeMs);
     this.drawMarkers(ctx, timeMs);
+    this.drawAttackCursor(ctx, timeMs);
     this.drawHover(ctx);
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -153,6 +166,50 @@ export class Renderer {
     for (const u of visible) drawUnit(ctx, u, PLAYER_COLORS[u.owner], timeMs);
   }
 
+  /** 다친 유닛·건물은 선택하지 않아도 체력 막대를 보여준다 (선택한 것은 drawSelection이 그린다) */
+  drawHealthBars(ctx, view) {
+    for (const unit of this.world.units.values()) {
+      const max = UNITS[unit.type].hp;
+      if (unit.hp >= max || this.selection.has(unit.id)) continue;
+      const x = unit.drawX * S;
+      const y = unit.drawY * S;
+      if (!intersects(view, x - S, y - S, S * 2, S * 2)) continue;
+      drawHealthBar(ctx, x, y - 26, Math.max(20, UNITS[unit.type].radius * S * 2), unit.hp / max);
+    }
+    for (const b of this.world.buildings.values()) {
+      const max = BUILDINGS[b.type].hp;
+      if (!b.complete || b.hp >= max || this.selection.has(b.id)) continue;
+      if (!intersects(view, b.x * S, b.y * S, b.size * S, b.size * S)) continue;
+      drawHealthBar(ctx, (b.x + b.size / 2) * S, b.y * S + b.size * S + 4, b.size * S * 0.6, b.hp / max);
+    }
+  }
+
+  drawEffects(ctx) {
+    const now = performance.now();
+    this.world.effects = this.world.effects.filter((effect) => drawEffect(ctx, effect, now));
+  }
+
+  drawAttackCursor(ctx, timeMs) {
+    const cursor = this.attackCursor;
+    if (!cursor) return;
+    const x = cursor.x * S;
+    const y = cursor.y * S;
+    const r = 10 + Math.sin(timeMs / 150) * 1.5;
+    ctx.strokeStyle = 'rgba(235, 90, 80, 0.95)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.moveTo(x - r - 5, y);
+    ctx.lineTo(x - r + 4, y);
+    ctx.moveTo(x + r - 4, y);
+    ctx.lineTo(x + r + 5, y);
+    ctx.moveTo(x, y - r - 5);
+    ctx.lineTo(x, y - r + 4);
+    ctx.moveTo(x, y + r - 4);
+    ctx.lineTo(x, y + r + 5);
+    ctx.stroke();
+  }
+
   drawSelection(ctx) {
     for (const id of this.selection) {
       if (typeof id === 'string') {
@@ -169,8 +226,9 @@ export class Renderer {
         const x = unit.drawX * S;
         const y = unit.drawY * S;
         const mine = this.world.isMine(unit);
-        drawSelectionRing(ctx, x, y + 7, 11, mine);
-        drawHealthBar(ctx, x, y - 22, 20, unit.hp / UNITS[unit.type].hp);
+        const radius = UNITS[unit.type].radius * S;
+        drawSelectionRing(ctx, x, y + 7, radius + 2, mine);
+        drawHealthBar(ctx, x, y - 26, Math.max(20, radius * 2), unit.hp / UNITS[unit.type].hp);
         continue;
       }
 
@@ -181,6 +239,7 @@ export class Renderer {
         ctx.lineWidth = 2;
         ctx.strokeRect(b.x * S + 1, b.y * S + 1, b.size * S - 2, b.size * S - 2);
         drawHealthBar(ctx, (b.x + b.size / 2) * S, b.y * S + b.size * S + 4, b.size * S * 0.6, b.hp / BUILDINGS[b.type].hp);
+        if (mine && b.rally) drawRally(ctx, b, b.rally, PLAYER_COLORS[b.owner]);
       }
     }
   }

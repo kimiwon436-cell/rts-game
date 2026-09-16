@@ -5,6 +5,7 @@ import { MARKET, buyCost, sellGain } from '@rune/shared/data/market.js';
 import { UNITS, WORKER } from '@rune/shared/data/units.js';
 import { UNIT_STATE } from '@rune/shared/protocol.js';
 import { missingResource } from '@rune/shared/rules/costs.js';
+import { ARMOR_NAMES, ATTACK_TYPE_NAMES } from '@rune/shared/rules/combat.js';
 import { h } from './dom.js';
 
 const STATE_TEXT = {
@@ -66,6 +67,26 @@ export function createCommandCard({ onAction }) {
       refs.progressText = h('span', { class: 'meter-text' });
       rows.push(h('div', { class: 'meter', role: 'img', 'aria-label': '진행도' }, refs.progressFill, refs.progressText));
     }
+    if (model.queue?.length) {
+      rows.push(
+        h(
+          'div',
+          { class: 'cc-queue', role: 'group', 'aria-label': '생산 대기열. 누르면 취소' },
+          ...model.queue.map(({ type, index }) =>
+            h(
+              'button',
+              {
+                class: 'cc-queue-item',
+                type: 'button',
+                title: `${UNITS[type].name} — 누르면 취소하고 비용을 돌려받습니다`,
+                onClick: () => onAction({ kind: 'cancelTrain', buildingId: model.buildingId, index }),
+              },
+              UNITS[type].name.slice(0, 2),
+            ),
+          ),
+        ),
+      );
+    }
     refs.text = h('p', { class: 'cc-text' });
     rows.push(refs.text);
     if (model.hint) rows.push(h('p', { class: 'cc-hint' }, model.hint));
@@ -91,7 +112,7 @@ export function createCommandCard({ onAction }) {
         type: 'button',
         disabled: btn.disabled,
         title: tooltip,
-        onClick: () => onAction(btn.action),
+        onClick: (event) => onAction({ ...btn.action, repeat: event.shiftKey ? 5 : 1 }),
       },
       h('span', { class: 'cc-key' }, btn.key),
       h('span', { class: 'cc-label' }, btn.label),
@@ -120,7 +141,7 @@ export function createCommandCard({ onAction }) {
     if (!event.code.startsWith('Key') || event.ctrlKey || event.metaKey || event.altKey) return false;
     const btn = hotkeys.get(event.code.slice(3));
     if (!btn || btn.disabled) return false;
-    onAction(btn.action);
+    onAction({ ...btn.action, repeat: event.shiftKey ? 5 : 1 });
     return true;
   }
 
@@ -167,12 +188,18 @@ function describeUnits(world, units, players) {
   const first = units[0];
   const def = UNITS[first.type];
   const model = {
-    title: units.length === 1 ? def.name : `${def.name} ${units.length}기`,
+    title:
+      units.length === 1
+        ? def.name
+        : units.every((u) => u.type === first.type)
+          ? `${def.name} ${units.length}기`
+          : `유닛 ${units.length}기`,
     subtitle: ownerName(players, first.owner),
     color: PLAYER_COLORS[first.owner],
     buttons: [],
     live: units.length === 1 ? { hp: [first.hp, def.hp], text: unitStatus(first) } : { text: groupStatus(units) },
   };
+  if (units.length === 1) model.hint = unitStats(def);
   if (!world.isMine(first)) return model;
 
   if (units.some((u) => UNITS[u.type].worker)) {
@@ -192,8 +219,28 @@ function describeUnits(world, units, players) {
     });
     model.hint = '건물을 고른 뒤 땅을 클릭 · Shift로 연달아 짓기 · Esc 취소';
   }
+  // 농노가 섞여 있으면 A는 룬 오벨리스크 단축키라서 공격 이동은 병력만 골랐을 때 보여준다
+  if (!units.some((u) => UNITS[u.type].worker)) {
+    model.buttons.push({ key: 'A', label: '공격 이동', note: '가며 만난 적과 싸움', action: { kind: 'attackMove' } });
+    if (units.length > 1) model.hint = '우클릭: 적은 공격, 땅은 이동 · A 뒤 클릭: 공격 이동';
+  }
+  const guards = units.filter((u) => UNITS[u.type].ability === 'shieldWall');
+  if (guards.length) {
+    const allOn = guards.every((u) => u.shieldWall);
+    model.buttons.push({
+      key: 'F',
+      label: allOn ? '방패벽 끄기' : '방패벽',
+      note: '이속 −50% · 화살 −60%',
+      action: { kind: 'shieldWall' },
+    });
+  }
   model.buttons.push({ key: 'H', label: '정지', action: { kind: 'stop' } });
   return model;
+}
+
+function unitStats(def) {
+  const { attack } = def;
+  return `공격 ${attack.damage} ${ATTACK_TYPE_NAMES[attack.type]} · 사거리 ${attack.range} · ${ARMOR_NAMES[def.armor]}`;
 }
 
 function unitStatus(unit) {
@@ -230,11 +277,41 @@ function describeBuilding(world, b, players) {
   model.hint = buildingHint(world, b, def);
   if (!mine) return model;
   const me = world.me;
+  model.buildingId = b.id;
+
+  if (def.trains) {
+    const keys = ['Q', 'W', 'E', 'R'];
+    def.trains.forEach((type, i) => {
+      const unit = UNITS[type];
+      const locked = me.age < unit.age;
+      model.buttons.push({
+        key: keys[i],
+        label: unit.name,
+        cost: unit.cost,
+        disabled: locked,
+        short: !locked && missingResource(me, unit.cost) !== null,
+        note: locked ? `${AGES[unit.age].name} 필요` : `${unit.trainTime}초 · 인구 ${unit.pop}`,
+        action: { kind: 'train', buildingId: b.id, unit: type },
+      });
+    });
+    const production = b.production;
+    if (production) {
+      const head = UNITS[production.types[0]].name;
+      model.queue = production.types.map((type, index) => ({ type, index }));
+      model.live.progress = production.progress;
+      model.live.progressLabel = production.blocked ? `${head} · 인구 부족` : `${head} 생산 중`;
+    }
+    model.hint = [def.dropoff ? '금·목재 반납' : null, def.pop ? `인구 +${def.pop}` : null, '우클릭으로 집결지 · Shift로 5기씩']
+      .filter(Boolean)
+      .join(' · ');
+  }
 
   if (b.type === 'keep') {
     if (me.ageTarget) {
-      model.live.progress = me.ageProgress;
-      model.live.progressLabel = `${AGES[me.ageTarget].name}로 발전 중`;
+      if (model.live.progress == null) {
+        model.live.progress = me.ageProgress;
+        model.live.progressLabel = `${AGES[me.ageTarget].name}로 발전 중`;
+      }
       model.buttons.push({ key: 'C', label: '발전 취소', note: '비용 전액 환불', action: { kind: 'cancelAgeUp' } });
     } else if (me.age < MAX_AGE) {
       const next = AGES[me.age + 1];

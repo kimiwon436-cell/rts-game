@@ -90,6 +90,7 @@ export const UNITS = Object.freeze({
     speed: 2.1,
     radius: 0.36,
     attack: { damage: 14, type: 'normal', range: 1, cooldown: 1.3 },
+    ability: 'shieldWall',
   },
   battlemage: {
     id: 'battlemage',
@@ -106,6 +107,9 @@ export const UNITS = Object.freeze({
     attack: { damage: 20, type: 'magic', range: 5, cooldown: 2.0, splash: 1.2 },
   },
 });
+
+/** 왕실 근위병의 방패벽: 켜면 느려지는 대신 화살(관통 피해)에 강해진다 */
+export const SHIELD_WALL = Object.freeze({ speedMultiplier: 0.5, pierceTakenMultiplier: 0.4 });
 
 /** 농노의 채집 능력 */
 export const WORKER = Object.freeze({

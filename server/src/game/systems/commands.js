@@ -1,13 +1,15 @@
 import { UNITS } from '@rune/shared/data/units.js';
-import { BUILDINGS, BUILD_MENU } from '@rune/shared/data/buildings.js';
+import { BUILDINGS, BUILD_MENU, PRODUCTION_QUEUE_MAX } from '@rune/shared/data/buildings.js';
 import { AGES, MAX_AGE, RESOURCES } from '@rune/shared/data/economy.js';
 import { MARKET, TRADABLE, buyCost, sellGain } from '@rune/shared/data/market.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
-import { CMD, REJECT, UNIT_STATE } from '@rune/shared/protocol.js';
+import { CMD, REJECT, UNIT_STATE, VICTORY_REASON } from '@rune/shared/protocol.js';
+import { computeDamage } from '@rune/shared/rules/combat.js';
 import { PLACE, checkPlacement } from '@rune/shared/rules/placement.js';
 import { missingResource } from '@rune/shared/rules/costs.js';
 import { orderGather, orderReturnCargo } from './gathering.js';
 import { cancelConstruction, orderConstruct } from './construction.js';
+import { defeatPlayer } from './victory.js';
 
 const MAX_UNIT_IDS = 60;
 const NOT_ENOUGH = { gold: REJECT.NOT_ENOUGH_GOLD, wood: REJECT.NOT_ENOUGH_WOOD, mana: REJECT.NOT_ENOUGH_MANA };
@@ -28,12 +30,12 @@ export function sanitizeCommand(raw) {
     if (!Number.isFinite(raw[key])) return null;
     cmd[key] = raw[key];
   }
-  for (const key of ['buildingId', 'tile']) {
+  for (const key of ['buildingId', 'tile', 'index', 'targetId']) {
     if (raw[key] === undefined) continue;
     if (!Number.isInteger(raw[key])) return null;
     cmd[key] = raw[key];
   }
-  for (const key of ['building', 'mineId', 'resource', 'action']) {
+  for (const key of ['building', 'unit', 'mineId', 'resource', 'action', 'ability']) {
     if (raw[key] === undefined) continue;
     if (typeof raw[key] !== 'string' || raw[key].length > 32) return null;
     cmd[key] = raw[key];
@@ -73,6 +75,21 @@ function applyCommand(world, slot, cmd) {
       return cancelAgeUp(world, slot);
     case CMD.TRADE:
       return trade(world, slot, cmd);
+    case CMD.TRAIN:
+      return train(world, slot, cmd);
+    case CMD.CANCEL_TRAIN:
+      return cancelTrain(world, slot, cmd);
+    case CMD.SET_RALLY:
+      return setRally(world, slot, cmd);
+    case CMD.ATTACK:
+      return attack(world, slot, cmd);
+    case CMD.ATTACK_MOVE:
+      return move(world, slot, cmd, true);
+    case CMD.TOGGLE_ABILITY:
+      return toggleAbility(world, slot, cmd);
+    case CMD.SURRENDER:
+      defeatPlayer(world, world.players[slot], VICTORY_REASON.SURRENDER);
+      return null;
     default:
       return REJECT.INVALID;
   }
@@ -87,18 +104,130 @@ function pay(player, cost) {
   for (const resource of RESOURCES) player[resource] -= cost[resource] ?? 0;
 }
 
-function move(world, slot, { unitIds, x, y }) {
+/** 이동과 공격 이동. 공격 이동은 가는 길에 만난 적과 싸우고(combat.js) 다시 목적지로 간다. */
+function move(world, slot, { unitIds, x, y }, attacking = false) {
   const units = ownUnits(world, slot, unitIds);
-  const tx = Math.floor(x);
-  const ty = Math.floor(y);
-  if (!units.length || !world.nav.inside(tx, ty)) return REJECT.INVALID_TARGET;
+  if (!units.length || !world.nav.inside(Math.floor(x), Math.floor(y))) return REJECT.INVALID_TARGET;
+  const slots = world.destinationSlots(x, y, units.length);
+  if (!slots.length) return REJECT.INVALID_TARGET;
+
+  // 한 기만 보낼 때는 누른 지점 그대로, 무리는 서로 다른 칸의 중심으로
+  const exact = units.length === 1 && !world.nav.isBlocked(Math.floor(x), Math.floor(y));
+  for (const [unit, [sx, sy]] of assignSlots(units, slots, x, y)) {
+    const goal = {
+      rect: { x: sx, y: sy, w: 1, h: 1 },
+      adjacent: false,
+      point: exact ? { x, y } : { x: sx + 0.5, y: sy + 0.5 },
+    };
+    world.stopUnit(unit);
+    unit.order = attacking ? { type: 'attackMove', goal } : { type: 'move' };
+    unit.state = UNIT_STATE.MOVE;
+    world.requestPath(unit, goal);
+  }
+  return null;
+}
+
+function attack(world, slot, { unitIds, targetId }) {
+  const target = world.entity(targetId);
+  if (!target || target.owner === slot || target.hp <= 0) return REJECT.INVALID_TARGET;
+  const info = UNITS[target.type] ? { def: UNITS[target.type], shieldWall: target.shieldWall } : { building: true, type: target.type };
+  const units = ownUnits(world, slot, unitIds).filter((unit) => computeDamage(UNITS[unit.type], info) > 0);
+  if (!units.length) return REJECT.CANNOT_ATTACK;
   for (const unit of units) {
     world.stopUnit(unit);
-    unit.order = { type: 'move' };
-    unit.state = UNIT_STATE.MOVE;
-    world.moveUnit(unit, { x: tx, y: ty, w: 1, h: 1 }, false, { x, y });
-    if (!unit.path) world.stopUnit(unit);
+    unit.order = { type: 'attack', targetId: target.id };
+    unit.state = UNIT_STATE.ATTACK;
   }
+  return null;
+}
+
+/** 방패벽 켜기·끄기. 고른 근위병 중 하나라도 꺼져 있으면 모두 켜고, 모두 켜져 있으면 모두 끈다. */
+function toggleAbility(world, slot, { unitIds, ability }) {
+  if (ability !== 'shieldWall') return REJECT.INVALID;
+  const guards = ownUnits(world, slot, unitIds).filter((unit) => UNITS[unit.type].ability === 'shieldWall');
+  if (!guards.length) return REJECT.INVALID_TARGET;
+  const enable = guards.some((unit) => !unit.shieldWall);
+  for (const unit of guards) unit.shieldWall = enable;
+  return null;
+}
+
+/**
+ * 무리 이동: 유닛마다 서로 다른 목적지 칸을 준다.
+ * 모여 있는 무리는 지금 대형을 유지하고, 흩어진 무리는 목표 주변으로 모인다.
+ * @returns {Array<[unit, [tx, ty]]>}
+ */
+export function assignSlots(units, slots, x, y) {
+  const cx = units.reduce((sum, u) => sum + u.x, 0) / units.length;
+  const cy = units.reduce((sum, u) => sum + u.y, 0) / units.length;
+  const spread = Math.max(0, ...units.map((u) => Math.hypot(u.x - cx, u.y - cy)));
+  const maxRadius = Math.sqrt(units.length) * 0.75;
+  const scale = spread > maxRadius ? maxRadius / spread : 1;
+
+  // 목표에서 먼 자리를 원하는 유닛부터 고르게 해 가운데 칸이 먼저 동나지 않게 한다
+  const wishes = units
+    .map((unit) => ({ unit, wx: x + (unit.x - cx) * scale, wy: y + (unit.y - cy) * scale }))
+    .sort((a, b) => Math.hypot(b.wx - x, b.wy - y) - Math.hypot(a.wx - x, a.wy - y));
+
+  const free = slots.slice();
+  const assigned = [];
+  for (const { unit, wx, wy } of wishes) {
+    if (free.length === 0) free.push(...slots); // 빈 칸이 모자라면 다시 쓴다
+    let best = 0;
+    let bestDistance = Infinity;
+    free.forEach(([sx, sy], i) => {
+      const d = Math.hypot(sx + 0.5 - wx, sy + 0.5 - wy);
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = i;
+      }
+    });
+    assigned.push([unit, free[best]]);
+    free.splice(best, 1);
+  }
+  return assigned;
+}
+
+function train(world, slot, { buildingId, unit: type }) {
+  const building = world.buildings.get(buildingId);
+  if (!building || building.owner !== slot || !building.complete) return REJECT.INVALID_TARGET;
+  const def = UNITS[type];
+  if (!def || !BUILDINGS[building.type].trains?.includes(type)) return REJECT.INVALID;
+
+  const player = world.players[slot];
+  if (player.age < def.age) return REJECT.REQUIRES_AGE;
+  if (building.queue.length >= PRODUCTION_QUEUE_MAX) return REJECT.QUEUE_FULL;
+  const missing = missingResource(player, def.cost);
+  if (missing) return NOT_ENOUGH[missing];
+
+  pay(player, def.cost);
+  building.queue.push({ type, progress: 0, blocked: false });
+  return null;
+}
+
+/** 생산 취소: 비용을 모두 돌려준다 */
+function cancelTrain(world, slot, { buildingId, index }) {
+  const building = world.buildings.get(buildingId);
+  if (!building || building.owner !== slot || !Number.isInteger(index) || !building.queue[index]) {
+    return REJECT.INVALID_TARGET;
+  }
+  const [item] = building.queue.splice(index, 1);
+  const cost = UNITS[item.type].cost;
+  for (const resource of RESOURCES) world.players[slot][resource] += cost[resource] ?? 0;
+  return null;
+}
+
+function setRally(world, slot, cmd) {
+  const building = world.buildings.get(cmd.buildingId);
+  if (!building || building.owner !== slot || !BUILDINGS[building.type].trains) return REJECT.INVALID_TARGET;
+  if (!Number.isFinite(cmd.x) || !Number.isFinite(cmd.y) || !world.nav.inside(Math.floor(cmd.x), Math.floor(cmd.y))) {
+    return REJECT.INVALID_TARGET;
+  }
+  building.rally = {
+    x: cmd.x,
+    y: cmd.y,
+    mineId: cmd.mineId !== undefined && world.mines.has(cmd.mineId) ? cmd.mineId : null,
+    tile: cmd.tile !== undefined && world.tiles[cmd.tile] === TERRAIN.TREE ? cmd.tile : null,
+  };
   return null;
 }
 

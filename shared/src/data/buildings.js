@@ -105,6 +105,9 @@ export const BUILDINGS = Object.freeze({
   },
 });
 
+/** 건물 하나의 생산 대기열 최대 길이 */
+export const PRODUCTION_QUEUE_MAX = 5;
+
 /** 스냅샷에서 건물 종류를 숫자로 보낼 때 쓰는 순서 */
 export const BUILDING_TYPES = Object.freeze(Object.keys(BUILDINGS));
 

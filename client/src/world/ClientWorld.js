@@ -2,7 +2,11 @@ import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { UNITS } from '@rune/shared/data/units.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
 import { GAME_EVENT } from '@rune/shared/protocol.js';
-import { decodeBuilding, decodePlayer, decodeUnit } from '@rune/shared/snapshot.js';
+import { decodeBuilding, decodeOwn, decodePlayer, decodePublicPlayer, decodeUnit } from '@rune/shared/snapshot.js';
+
+/** 유닛은 그리는 위치, 건물은 풋프린트 중심 (타일 좌표) */
+const centerOf = (entity) =>
+  entity.size ? { x: entity.x + entity.size / 2, y: entity.y + entity.size / 2 } : { x: entity.drawX, y: entity.drawY };
 
 /** 그리는 위치가 서버 위치를 따라잡는 속도. 3-5에서 스냅샷 보간으로 바꾼다. */
 const SMOOTHING_PER_SEC = 18;
@@ -22,6 +26,9 @@ export class ClientWorld {
     this.mineAmounts = new Map(map.goldMines.map((m) => [m.id, m.amount]));
     this.me = null;
     this.ages = new Map(); // slot → age
+    this.publicPlayers = new Map(); // slot → { age, collapseSeconds, defeated }
+    /** 전투 효과 (투사체·타격·쓰러짐). 렌더러가 시간이 지난 것을 지운다 */
+    this.effects = [];
     this.tick = -1;
     this.occupied = new Uint8Array(map.tiles.length);
     this.occupancyDirty = true;
@@ -38,7 +45,12 @@ export class ClientWorld {
   applySnapshot(snap) {
     this.tick = snap.t;
     this.me = decodePlayer(snap.me);
-    for (const [slot, age] of snap.players) this.ages.set(slot, age);
+    for (const raw of snap.players) {
+      const info = decodePublicPlayer(raw);
+      this.ages.set(info.slot, info.age);
+      this.publicPlayers.set(info.slot, info);
+    }
+    const removed = new Map(); // 이번 스냅샷에서 사라진 유닛·건물 (쓰러짐 효과 위치용)
 
     const unitIds = new Set();
     for (const raw of snap.units) {
@@ -46,9 +58,13 @@ export class ClientWorld {
       unitIds.add(data.id);
       const unit = this.units.get(data.id);
       if (unit) Object.assign(unit, data);
-      else this.units.set(data.id, { ...data, drawX: data.x, drawY: data.y });
+      else this.units.set(data.id, { ...data, drawX: data.x, drawY: data.y, facing: 1 });
     }
-    for (const id of this.units.keys()) if (!unitIds.has(id)) this.units.delete(id);
+    for (const [id, unit] of this.units) {
+      if (unitIds.has(id)) continue;
+      removed.set(id, unit);
+      this.units.delete(id);
+    }
 
     const buildingIds = new Set();
     for (const raw of snap.buildings) {
@@ -62,11 +78,18 @@ export class ClientWorld {
         this.occupancyDirty = true;
       }
     }
-    for (const id of this.buildings.keys()) {
-      if (!buildingIds.has(id)) {
-        this.buildings.delete(id);
-        this.occupancyDirty = true;
-      }
+    for (const [id, building] of this.buildings) {
+      if (buildingIds.has(id)) continue;
+      removed.set(id, building);
+      this.buildings.delete(id);
+      this.occupancyDirty = true;
+    }
+
+    // 내 건물의 생산 대기열과 집결지 (상대 건물은 늘 null)
+    const { queues, rallies } = decodeOwn(snap.own);
+    for (const building of this.buildings.values()) {
+      building.production = queues.get(building.id) ?? null;
+      building.rally = rallies.get(building.id) ?? null;
     }
 
     const mineIds = new Set();
@@ -86,7 +109,44 @@ export class ClientWorld {
         this.tiles[event[1]] = TERRAIN.GRASS;
         this.onTreeFelled?.(event[1]);
       }
+      this.addCombatEffect(event, removed);
       this.onEvent?.(event);
+    }
+  }
+
+  addCombatEffect(event, removed) {
+    const now = performance.now();
+    const find = (id) => this.units.get(id) ?? this.buildings.get(id) ?? removed.get(id);
+
+    if (event[0] === GAME_EVENT.ATTACK) {
+      const attacker = find(event[1]);
+      const target = find(event[2]);
+      if (!attacker || !target) return;
+      const attack = (UNITS[attacker.type] ?? BUILDINGS[attacker.type]).attack;
+      const to = centerOf(target);
+      if (attack.range <= 1.5) {
+        this.effects.push({ kind: 'slash', x: to.x, y: to.y, start: now, duration: 220 });
+        return;
+      }
+      const from = centerOf(attacker);
+      const distance = Math.hypot(to.x - from.x, to.y - from.y);
+      this.effects.push({
+        kind: attack.type === 'magic' ? 'bolt' : 'arrow',
+        from,
+        to,
+        splash: attack.splash ?? 0,
+        start: now,
+        duration: 120 + distance * 35,
+      });
+    } else if (event[0] === GAME_EVENT.UNIT_DIED) {
+      const unit = removed.get(event[1]);
+      if (unit) this.effects.push({ kind: 'death', x: unit.drawX, y: unit.drawY, start: now, duration: 700 });
+    } else if (event[0] === GAME_EVENT.BUILDING_DESTROYED) {
+      const building = removed.get(event[1]);
+      if (building) {
+        const { x, y } = centerOf(building);
+        this.effects.push({ kind: 'rubble', x, y, size: building.size, start: now, duration: 1600 });
+      }
     }
   }
 
@@ -96,6 +156,7 @@ export class ClientWorld {
     for (const unit of this.units.values()) {
       const dx = unit.x - unit.drawX;
       const dy = unit.y - unit.drawY;
+      if (Math.abs(dx) > 0.01) unit.facing = dx > 0 ? 1 : -1;
       if (Math.abs(dx) > TELEPORT_DISTANCE || Math.abs(dy) > TELEPORT_DISTANCE) {
         unit.drawX = unit.x;
         unit.drawY = unit.y;

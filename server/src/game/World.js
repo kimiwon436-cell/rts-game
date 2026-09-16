@@ -11,6 +11,16 @@ import { Pathfinder, toWaypoints } from './pathfinding/astar.js';
 export const ADJACENT_DISTANCE = 0.95;
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+const NEIGHBORS_8 = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [1, 1],
+  [1, -1],
+  [-1, 1],
+  [-1, -1],
+];
 
 /** 점과 사각형 사이 거리 (타일). 점이 사각형 안이면 0 */
 export function distanceToRect(px, py, rect) {
@@ -32,6 +42,10 @@ export class World {
     this.tick = 0;
     this.nextId = 1;
     this.events = [];
+    /** 경로 계산을 기다리는 유닛 id (processPathQueue가 틱마다 예산만큼 처리) */
+    this.pathQueue = [];
+    /** 경기 결과. 정해지면 { winner, reason, tick } */
+    this.result = null;
 
     this.tiles = new Uint8Array(map.tiles);
     this.treeWood = new Uint8Array(this.tiles.length);
@@ -66,6 +80,9 @@ export class World {
         ageTarget: 0,
         ageProgress: 0,
         market: { ...MARKET.basePrice },
+        collapseAt: null, // 왕관 몰락 카운트다운이 끝나는 틱
+        defeated: false,
+        defeatReason: null,
       };
     }
 
@@ -108,6 +125,13 @@ export class World {
       carry: null,
       harvest: 0,
       dropoffId: null,
+      pathPending: false,
+      cooldown: 0, // 다음 공격까지 남은 초
+      combatTargetId: null, // 싸우는 중인 적
+      autoTarget: false, // 스스로 고른 적이면 너무 멀어질 때 포기한다
+      chaseTick: -1,
+      lastAttackerId: null, // 마지막으로 나를 때린 적 (반격용)
+      shieldWall: false,
     };
     this.units.set(unit.id, unit);
     return unit;
@@ -129,6 +153,10 @@ export class World {
       complete,
       started: complete,
       wellId: null,
+      queue: [], // 생산 대기열 [{ type, progress, blocked }]
+      rally: null, // 집결지 { x, y, mineId, tile }
+      cooldown: 0, // 감시탑 공격 간격
+      combatTargetId: null,
     };
     this.buildings.set(building.id, building);
     this.setFootprint(building, 1, complete);
@@ -203,7 +231,84 @@ export class World {
     unit.phase = null;
     unit.path = null;
     unit.goal = null;
+    unit.pathPending = false;
+    unit.combatTargetId = null;
+    unit.autoTarget = false;
     unit.state = UNIT_STATE.IDLE;
+  }
+
+  /** 경로 계산을 요청한다. 차례가 올 때까지 유닛은 제자리에서 기다린다. */
+  requestPath(unit, goal) {
+    unit.goal = goal;
+    unit.path = null;
+    if (unit.pathPending) return;
+    unit.pathPending = true;
+    this.pathQueue.push(unit.id);
+  }
+
+  /**
+   * 쌓인 경로 요청을 처리한다. 한 틱에 maxCount번, maxMs 밀리초까지만 계산하고 나머지는 다음 틱으로 넘긴다.
+   * (무리 이동 명령 한 번에 수십 번의 A*가 몰려도 틱이 밀리지 않게)
+   * @returns {number} 이번에 처리한 요청 수
+   */
+  processPathQueue(maxCount, maxMs) {
+    const started = performance.now();
+    let processed = 0;
+    while (this.pathQueue.length && processed < maxCount && performance.now() - started < maxMs) {
+      const unit = this.units.get(this.pathQueue.shift());
+      if (!unit?.pathPending) continue;
+      unit.pathPending = false;
+      const { rect, adjacent, point } = unit.goal;
+      this.moveUnit(unit, rect, adjacent, point);
+      processed++;
+    }
+    return processed;
+  }
+
+  /** 건물 둘레의 빈 칸에 유닛을 만든다. toward(집결지나 맵 중앙)에 가까운 칸을 고른다. */
+  spawnUnitNear(type, owner, building, toward) {
+    for (let r = 1; r <= 4; r++) {
+      const ring = { x: building.x - r + 1, y: building.y - r + 1, w: building.w + 2 * (r - 1), h: building.h + 2 * (r - 1) };
+      const spots = this.ringTiles(ring).filter(([tx, ty]) => !this.nav.isBlocked(tx, ty));
+      if (!spots.length) continue;
+      const distance = ([tx, ty]) => Math.hypot(tx + 0.5 - toward.x, ty + 0.5 - toward.y);
+      spots.sort((a, b) => distance(a) - distance(b));
+      return this.spawnUnit(type, owner, spots[0][0] + 0.5, spots[0][1] + 0.5);
+    }
+    const spot = this.nearestFreeTile(building.x + building.w / 2, building.y + building.h + 0.5) ?? [building.x, building.y];
+    return this.spawnUnit(type, owner, spot[0] + 0.5, spot[1] + 0.5);
+  }
+
+  /**
+   * 무리 이동의 목적지 칸들: 목표에서 걸어서 이어진 빈 칸을 가까운 순서로 count개.
+   * 목표 칸에서 퍼져 나가며(BFS) 모으므로 벽 너머 칸은 뽑히지 않는다.
+   */
+  destinationSlots(x, y, count) {
+    let start = [Math.floor(x), Math.floor(y)];
+    if (this.nav.isBlocked(start[0], start[1])) {
+      start = this.nearestFreeTile(x, y);
+      if (!start) return [];
+    }
+    const wanted = Math.min(count * 2 + 8, 400);
+    const seen = new Set([start[1] * this.width + start[0]]);
+    const found = [];
+    const queue = [start];
+    for (let head = 0; head < queue.length && found.length < wanted; head++) {
+      const [tx, ty] = queue[head];
+      found.push([tx, ty]);
+      for (const [dx, dy] of NEIGHBORS_8) {
+        const nx = tx + dx;
+        const ny = ty + dy;
+        if (this.nav.isBlocked(nx, ny)) continue;
+        if (dx && dy && (this.nav.isBlocked(nx, ty) || this.nav.isBlocked(tx, ny))) continue;
+        const i = ny * this.width + nx;
+        if (seen.has(i)) continue;
+        seen.add(i);
+        queue.push([nx, ny]);
+      }
+    }
+    const distance = ([tx, ty]) => Math.hypot(tx + 0.5 - x, ty + 0.5 - y);
+    return found.sort((a, b) => distance(a) - distance(b)).slice(0, count);
   }
 
   /** 사각형 안에 걸친 유닛을 가장 가까운 빈 칸으로 옮긴다 */
@@ -240,6 +345,11 @@ export class World {
   }
 
   // ---------- 조회 ----------
+
+  /** id로 유닛이나 건물을 찾는다 (둘은 같은 id 공간을 쓴다) */
+  entity(id) {
+    return this.units.get(id) ?? this.buildings.get(id) ?? null;
+  }
 
   tileRect(tile) {
     return { x: tile % this.width, y: Math.floor(tile / this.width), w: 1, h: 1 };

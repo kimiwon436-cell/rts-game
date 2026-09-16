@@ -217,8 +217,19 @@ function startGame({ roomId, mapId, players }) {
       me: me(),
       roomName: state.room?.name ?? '',
       onLeave: leaveRoom,
+      onReturnToRoom: returnToRoom,
     }),
   );
+}
+
+/** 경기가 끝난 뒤 같은 방의 대기실로 돌아간다 (방이 없으면 로비로) */
+function returnToRoom() {
+  if (!state.room) {
+    showLobby();
+    return;
+  }
+  show('room', createRoomScreen({ me: me(), onReady: setReady, onLeave: leaveRoom }));
+  state.screen.update(state.room);
 }
 
 showTitle();

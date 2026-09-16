@@ -17,6 +17,7 @@ export const EV = Object.freeze({
   GAME_START: 'game:start', // { roomId, mapId, players }
   GAME_SNAP: 'game:snap', // 틱마다 보내는 상태 (shared/src/snapshot.js)
   GAME_REJECT: 'game:reject', // { seq, reason }
+  GAME_END: 'game:end', // { winner, reason, durationSec, players }
   SESSION_REPLACED: 'session:replaced',
 });
 
@@ -47,6 +48,21 @@ export const CMD = Object.freeze({
   AGE_UP: 'ageUp', // {}
   CANCEL_AGE_UP: 'cancelAgeUp', // {}
   TRADE: 'trade', // { resource: 'wood' | 'mana', action: 'buy' | 'sell' }
+  TRAIN: 'train', // { buildingId, unit } — 생산 대기열에 넣기
+  CANCEL_TRAIN: 'cancelTrain', // { buildingId, index }
+  SET_RALLY: 'setRally', // { buildingId, x, y } — mineId나 tile을 주면 새 농노가 바로 채집한다
+  ATTACK: 'attack', // { unitIds, targetId } — 적 유닛·건물
+  ATTACK_MOVE: 'attackMove', // { unitIds, x, y } — 가다가 만나는 적과 싸운다
+  TOGGLE_ABILITY: 'toggleAbility', // { unitIds, ability: 'shieldWall' }
+  SURRENDER: 'surrender', // {}
+});
+
+/** 경기가 끝난 이유 */
+export const VICTORY_REASON = Object.freeze({
+  CONQUEST: 'conquest', // 왕관 몰락 카운트다운이 끝났다
+  ANNIHILATION: 'annihilation', // 유닛도 건물도 남지 않았다
+  SURRENDER: 'surrender',
+  LEFT: 'left', // 경기 중에 나갔다
 });
 
 /** 명령 거부 이유 */
@@ -63,6 +79,8 @@ export const REJECT = Object.freeze({
   AGE_IN_PROGRESS: 'AGE_IN_PROGRESS',
   MAX_AGE: 'MAX_AGE',
   NO_MARKET: 'NO_MARKET',
+  QUEUE_FULL: 'QUEUE_FULL',
+  CANNOT_ATTACK: 'CANNOT_ATTACK',
   // 배치 판정 (shared/src/rules/placement.js의 PLACE와 같은 값)
   OUT_OF_BOUNDS: 'OUT_OF_BOUNDS',
   BLOCKED: 'BLOCKED',
@@ -87,4 +105,11 @@ export const GAME_EVENT = Object.freeze({
   MINE_DEPLETED: 2, // [code, mineId]
   BUILT: 3, // [code, buildingId, ownerSlot]
   AGE_UP: 4, // [code, ownerSlot, age]
+  TRAINED: 5, // [code, unitId, ownerSlot]
+  ATTACK: 6, // [code, attackerId, targetId] — 공격 모션·투사체용
+  UNIT_DIED: 7, // [code, unitId]
+  BUILDING_DESTROYED: 8, // [code, buildingId]
+  CROWN_FALLING: 9, // [code, ownerSlot] — 영주관을 모두 잃어 왕관 몰락 카운트다운 시작
+  CROWN_RESTORED: 10, // [code, ownerSlot] — 영주관을 다시 지어 카운트다운 취소
+  PLAYER_DEFEATED: 11, // [code, ownerSlot]
 });
