@@ -60,7 +60,7 @@ test('프로필 저장소: 닉네임은 대소문자를 무시하고 한 사람�
     { uid: 'uid-1', mode: '1v1', rating: 984, won: false },
   ]);
   const board = await store.leaderboard('1v1');
-  assert.deepEqual(board.map((p) => [p.nickname, p.ratings['1v1'], p.ranked.wins]), [
+  assert.deepEqual(board.map((p) => [p.nickname, p.ratings['1v1'], p.ranked['1v1'].wins]), [
     ['Paladin', 1016, 1],
     ['Knight', 984, 0],
   ]);

@@ -1,10 +1,11 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { NICKNAME_ERROR, nicknameKey, validateNickname } from '@rune/shared/rules/nickname.js';
+import { DEFAULT_RATING } from '@rune/shared/rules/rating.js';
 import { getDb } from '../firebase.js';
 
-/** 랭킹전 모드별 시작 레이팅 */
+/** 랭킹전 모드 (모드마다 레이팅이 따로다) */
 export const RATING_MODES = Object.freeze(['1v1', '2v2', '3v3']);
-export const DEFAULT_RATING = 1000;
+export { DEFAULT_RATING };
 
 export class ProfileError extends Error {
   /** @param {string} code NICKNAME_ERROR 값 또는 'PROFILE_EXISTS' */
@@ -15,6 +16,7 @@ export class ProfileError extends Error {
 }
 
 const defaultRatings = () => Object.fromEntries(RATING_MODES.map((mode) => [mode, DEFAULT_RATING]));
+const defaultRanked = () => Object.fromEntries(RATING_MODES.map((mode) => [mode, { wins: 0, losses: 0 }]));
 
 /** 저장된 문서를 게임이 쓰는 프로필 모양으로 */
 function toProfile(uid, data) {
@@ -22,7 +24,10 @@ function toProfile(uid, data) {
     uid,
     nickname: data.nickname,
     ratings: { ...defaultRatings(), ...(data.ratings ?? {}) },
-    ranked: { wins: data.ranked?.wins ?? 0, losses: data.ranked?.losses ?? 0 },
+    // 랭킹 승패는 모드마다 따로
+    ranked: Object.fromEntries(
+      RATING_MODES.map((mode) => [mode, { wins: data.ranked?.[mode]?.wins ?? 0, losses: data.ranked?.[mode]?.losses ?? 0 }]),
+    ),
     wins: data.wins ?? 0,
     losses: data.losses ?? 0,
     matches: data.matches ?? 0,
@@ -68,7 +73,7 @@ export class FirestoreProfileStore {
         nickname,
         nicknameKey: key,
         ratings: defaultRatings(),
-        ranked: { wins: 0, losses: 0 },
+        ranked: defaultRanked(),
         createdAt: FieldValue.serverTimestamp(),
       };
       tx.set(nameRef, { uid, nickname, createdAt: FieldValue.serverTimestamp() });
@@ -85,7 +90,7 @@ export class FirestoreProfileStore {
         this.db.collection('users').doc(uid),
         {
           ratings: { [mode]: rating },
-          ranked: { wins: FieldValue.increment(won ? 1 : 0), losses: FieldValue.increment(won ? 0 : 1) },
+          ranked: { [mode]: { wins: FieldValue.increment(won ? 1 : 0), losses: FieldValue.increment(won ? 0 : 1) } },
         },
         { merge: true },
       );
@@ -93,10 +98,18 @@ export class FirestoreProfileStore {
     await batch.commit();
   }
 
-  /** 모드별 순위표 */
+  /** 모드별 순위표 (레이팅이 있는 문서만 정렬된다 — 예전 익명 문서는 빠진다) */
   async leaderboard(mode, limit = 50) {
     const snap = await this.db.collection('users').orderBy(`ratings.${mode}`, 'desc').limit(limit).get();
     return snap.docs.filter((doc) => doc.data().nicknameKey).map((doc) => toProfile(doc.id, doc.data()));
+  }
+
+  /** 내 순위 = 나보다 레이팅이 높은 사람 수 + 1 (집계 쿼리라 문서를 읽지 않는다) */
+  async rankOf(uid, mode) {
+    const me = await this.get(uid);
+    if (!me) return null;
+    const snap = await this.db.collection('users').where(`ratings.${mode}`, '>', me.ratings[mode]).count().get();
+    return snap.data().count + 1;
   }
 }
 
@@ -122,7 +135,7 @@ export class MemoryProfileStore {
     const key = nicknameKey(checked.nickname);
     if (this.users.has(uid)) throw new ProfileError('PROFILE_EXISTS');
     if (this.names.has(key) && this.names.get(key) !== uid) throw new ProfileError(NICKNAME_ERROR.TAKEN);
-    const data = { nickname: checked.nickname, nicknameKey: key, ratings: defaultRatings(), ranked: { wins: 0, losses: 0 } };
+    const data = { nickname: checked.nickname, nicknameKey: key, ratings: defaultRatings(), ranked: defaultRanked() };
     this.names.set(key, uid);
     this.users.set(uid, data);
     return toProfile(uid, data);
@@ -133,7 +146,8 @@ export class MemoryProfileStore {
       const data = this.users.get(uid);
       if (!data) continue;
       data.ratings = { ...data.ratings, [mode]: rating };
-      data.ranked = { wins: data.ranked.wins + (won ? 1 : 0), losses: data.ranked.losses + (won ? 0 : 1) };
+      const record = data.ranked[mode];
+      data.ranked = { ...data.ranked, [mode]: { wins: record.wins + (won ? 1 : 0), losses: record.losses + (won ? 0 : 1) } };
     }
   }
 
@@ -142,6 +156,14 @@ export class MemoryProfileStore {
       .map(([uid, data]) => toProfile(uid, data))
       .sort((a, b) => b.ratings[mode] - a.ratings[mode])
       .slice(0, limit);
+  }
+
+  async rankOf(uid, mode) {
+    const me = await this.get(uid);
+    if (!me) return null;
+    let higher = 0;
+    for (const [other, data] of this.users) if (other !== uid && toProfile(other, data).ratings[mode] > me.ratings[mode]) higher++;
+    return higher + 1;
   }
 }
 

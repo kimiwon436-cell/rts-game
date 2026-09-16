@@ -1,5 +1,6 @@
 import './styles.css';
 import { EV, ERR } from '@rune/shared/protocol.js';
+import { GAME_MODES, MAP_LIST } from '@rune/shared/map/maps/index.js';
 import { NICKNAME_MESSAGES } from '@rune/shared/rules/nickname.js';
 import { SERVER_URL } from './config.js';
 import { authErrorMessage, createAuth } from './auth.js';
@@ -29,6 +30,8 @@ const state = {
   rooms: [],
   room: null, // 내가 들어간 방
   recorder: null, // 지금 경기의 리플레이 녹화 (재접속해도 이어서 쌓는다)
+  ranked: null, // 랭킹전 대기 상태 { mode, waitingSec, queueSize }
+  gameEnded: false, // 결과 화면을 보고 있는 중 (방이 닫혀도 로비로 끌어내지 않는다)
   view: null, // 'loading' | 'auth' | 'nickname' | 'lobby' | 'room' | 'game' | 'replay' | 'status'
   screen: null,
 };
@@ -155,6 +158,7 @@ function openSocket() {
     if (profile) {
       state.pendingNickname = null;
       if (['status', 'auth', 'nickname'].includes(state.view)) showLobby();
+      else state.screen?.setProfile?.(profile); // 랭킹전 뒤 레이팅이 바뀌었다
       return;
     }
     // 가입 폼에서 고른 닉네임이 있으면 바로 예약한다. 먼저 누가 가져갔으면 닉네임 화면에서 다시 고른다
@@ -162,6 +166,22 @@ function openSocket() {
     state.pendingNickname = null;
     const problem = wanted ? await claimNickname(wanted) : '';
     if (problem !== null) showNicknameScreen(wanted ?? '', problem);
+  });
+  socket.on(EV.RANKED_STATUS, (status) => {
+    if (status?.cancelled) toast('상대가 나가 매칭이 취소됐습니다. 다시 찾는 중…', { error: true });
+    state.ranked = status?.cancelled ? null : status;
+    if (state.view === 'lobby') state.screen.setRankedStatus(state.ranked);
+  });
+  socket.on(EV.RANKED_FOUND, ({ mode, mapId }) => {
+    state.ranked = null;
+    const map = MAP_LIST.find((m) => m.id === mapId)?.name ?? mapId;
+    toast(`매칭됐습니다! ${GAME_MODES[mode].name} · ${map} — 곧 시작합니다`);
+  });
+  socket.on(EV.RANKED_RESULT, (payload) => {
+    if (state.view === 'game') state.screen.setRankedResult?.(payload);
+  });
+  socket.on(EV.GAME_END, () => {
+    state.gameEnded = true;
   });
   socket.on(EV.LOBBY_UPDATE, (rooms) => {
     state.rooms = rooms;
@@ -247,8 +267,15 @@ function showLobby() {
     onJoin: joinRoom,
     onOpenReplay: openReplay,
     onSignOut: signOut,
+    onRankedJoin: async (mode) => {
+      const res = await request(state.socket, EV.RANKED_JOIN, { mode });
+      if (!res.ok) toast(errorMessage(res.error), { error: true });
+    },
+    onRankedLeave: () => request(state.socket, EV.RANKED_LEAVE),
+    onLoadLeaderboard: (mode) => request(state.socket, EV.RANKED_LEADERBOARD, { mode }),
   });
   show('lobby', screen);
+  screen.setRankedStatus(state.ranked);
   screen.setOnline(Boolean(state.socket?.connected));
   screen.setRooms(state.rooms);
   request(state.socket, EV.LOBBY_LIST).then((res) => {
@@ -300,6 +327,7 @@ async function leaveRoom() {
 function onRoom(room) {
   state.room = room;
   if (!room) {
+    if (state.view === 'game' && state.gameEnded) return; // 결과 화면은 그대로 (랭킹전은 끝나면 방이 닫힌다)
     if (state.view === 'room' || state.view === 'game') showLobby();
     return;
   }
@@ -313,7 +341,9 @@ function onRoom(room) {
 
 // ---------- 게임 ----------
 
-function startGame({ roomId, mapId, players }, { resume = false } = {}) {
+function startGame({ roomId, mapId, players, ranked = false }, { resume = false } = {}) {
+  state.gameEnded = false;
+  state.ranked = null;
   console.log(`[게임 ${resume ? '재접속' : '시작'}] 방 ${roomId} · 맵 ${mapId}`);
   // 재접속이면 같은 경기의 녹화를 이어서 쌓는다 (중간의 전체 스냅샷이 상태를 다시 맞춘다)
   if (!resume || state.recorder?.roomId !== roomId) {
@@ -330,6 +360,7 @@ function startGame({ roomId, mapId, players }, { resume = false } = {}) {
       players,
       me: me(),
       recorder: state.recorder,
+      ranked,
       roomName: state.room?.name ?? '',
       onLeave: leaveRoom,
       onReturnToRoom: returnToRoom,

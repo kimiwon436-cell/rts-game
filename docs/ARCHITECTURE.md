@@ -350,6 +350,25 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 
 ---
 
+## 5-4. 랭킹전 (`server/src/net/matchmaking.js`, `shared/src/rules/rating.js`)
+
+- **대기열**은 방식(1대1·2대2·3대3)마다 따로다. 1초마다 레이팅 순으로 늘어놓고 연속한 (팀 크기 × 2)명씩 보며,
+  그 묶음에서 가장 오래 기다린 사람의 허용 차이(바로 ±150, 10초마다 +50, 최대 1000) 안이면 묶는다.
+  가장 오래 기다린 사람이 들어간 묶음을 먼저 잡는다.
+- **팀 나누기**: 레이팅 합의 차이가 가장 작은 조합 (4명 3가지, 6명 10가지를 모두 본다).
+- 맵은 그 방식의 맵 중 하나를 고른다. 로비에 **랭킹전 방**을 열어(목록에 안 보이고 끼어들 수 없다) 준비 없이 바로 카운트다운한다.
+  시작 전에 한 명이라도 나가면 방이 깨지고, 남은 사람은 대기열 앞쪽(60초 기다린 것으로)으로 돌아간다.
+  끝나면 재대결 없이 방이 닫힌다.
+- **레이팅**: 팀 평균 Elo. `기대 승률 = 1 / (1 + 10^((상대 팀 평균 − 우리 팀 평균) / 400))`,
+  변화 = K × (결과 − 기대 승률). K는 그 방식의 랭킹전 10판까지 48, 이후 32. 바닥 100. 무승부는 그대로.
+  이탈은 패배로 처리되므로 레이팅도 잃는다.
+- 경기가 끝나면 저장소에서 레이팅을 다시 읽어 계산하고(`applyRatings`, Firestore는 배치 한 번),
+  참가자에게 `ranked:result`와 갱신된 `session:profile`을 보낸다.
+- **순위표**: 방식별 상위 50명을 30초 캐시한다 (레이팅이 바뀌면 바로 비운다). 내 순위는 집계 쿼리(`count()`)로
+  "나보다 높은 사람 수 + 1"을 구해 문서를 읽지 않는다.
+
+---
+
 ## 5-2. 맹세와 궁극 유닛 (`server/src/game/systems/abilities.js`)
 
 기획서 4장을 그대로 구현한 시스템. 규칙 데이터는 `shared/src/data/oaths.js`·`abilities.js`에 있다.
@@ -450,7 +469,7 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 
 | 경로 | 필드 | 쓰기 권한 |
 |---|---|---|
-| `users/{uid}` | nickname, nicknameKey, ratings{1v1,2v2,3v3}, ranked{wins,losses}, matches, wins, losses, createdAt, lastPlayedAt | 서버만 |
+| `users/{uid}` | nickname, nicknameKey, ratings{1v1,2v2,3v3}, ranked{1v1,2v2,3v3:{wins,losses}}, matches, wins, losses, createdAt, lastPlayedAt | 서버만 |
 | `nicknames/{key}` | uid, nickname, createdAt — 닉네임 예약 (key = NFKC 소문자) | 서버만 |
 | `matches/{matchId}` | matchId, mapId, players[{slot, uid, nickname, defeated}], uids[], winnerSlot, reason, durationSec, startedAt, endedAt | 서버만 |
 

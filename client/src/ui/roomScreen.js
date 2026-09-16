@@ -40,6 +40,14 @@ export function createRoomScreen({ me, onReady, onLeave, onTeam, onSettings }) {
 
   function renderSettings(room) {
     const isHost = room.hostUid === me.uid;
+    if (room.ranked) {
+      settings.replaceChildren(
+        h('span', { class: 'replay-badge' }, '랭킹전'),
+        h('span', { class: 'setting-chip' }, GAME_MODES[room.mode].name),
+        h('span', { class: 'setting-chip' }, mapName(room.mapId)),
+      );
+      return;
+    }
     if (!isHost) {
       settings.replaceChildren(
         h('span', { class: 'setting-chip' }, GAME_MODES[room.mode].name),
@@ -123,9 +131,12 @@ export function createRoomScreen({ me, onReady, onLeave, onTeam, onSettings }) {
     myReady = Boolean(room.players.find((p) => p.uid === me.uid)?.ready);
     readyButton.textContent = myReady ? '준비 취소' : '준비';
     readyButton.classList.toggle('btn-primary', !myReady);
+    readyButton.hidden = room.ranked; // 랭킹전은 자동으로 시작한다
 
     const full = room.players.length === room.maxPlayers;
-    hint.textContent = !full
+    hint.textContent = room.ranked
+      ? '매칭된 상대와 곧 시작합니다. 지금 나가면 매칭이 취소됩니다.'
+      : !full
       ? `${room.maxPlayers - room.players.length}명 더 들어오면 모두 준비를 눌러 시작합니다.`
       : room.players.every((p) => p.ready)
         ? '모두 준비했습니다. 곧 시작합니다.'

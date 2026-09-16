@@ -46,7 +46,7 @@ function endReason(reason, won, team) {
  * 게임 화면: 스냅샷을 받아 그리고, 선택·우클릭 명령·건물 배치를 서버에 보낸다.
  * 규칙 판정은 서버가 한다. 클라이언트의 배치 판정은 미리보기용이다.
  */
-export function createGameView({ canvas, socket, mapId, players, me, recorder, onLeave, onReturnToRoom }) {
+export function createGameView({ canvas, socket, mapId, players, me, recorder, ranked = false, onLeave, onReturnToRoom }) {
   const map = loadMap(mapId);
   const mySlot = players.find((p) => p.uid === me.uid)?.slot ?? 0;
 
@@ -722,6 +722,17 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
     }
   }
 
+  // 랭킹전 레이팅 변화는 결과보다 조금 늦게 온다 (서버가 저장한 뒤)
+  const ratingLine = h('p', { class: 'result-rating', 'aria-live': 'polite' }, ranked ? '레이팅 계산 중…' : '');
+  function setRankedResult({ changes }) {
+    const mine = changes.find((c) => c.nickname === me.nickname);
+    if (!mine) return;
+    const sign = mine.delta > 0 ? '+' : '';
+    ratingLine.textContent = `레이팅 ${mine.before} → ${mine.after} (${sign}${mine.delta})`;
+    ratingLine.classList.toggle('is-up', mine.delta > 0);
+    ratingLine.classList.toggle('is-down', mine.delta < 0);
+  }
+
   function showResult(result) {
     ended = true;
     cancelPlacing();
@@ -738,6 +749,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
       h('p', { class: won ? 'result-kicker is-win' : 'result-kicker' }, won ? '승리' : '패배'),
       h('h2', { class: 'result-title' }, won ? '왕관을 지켰습니다' : '왕관을 잃었습니다'),
       h('p', { class: 'result-reason' }, `${endReason(result.reason, won, teamGame)} · 경기 시간 ${minutes}분 ${seconds}초`),
+      ranked ? ratingLine : null,
       teamGame
         ? h(
             'ul',
@@ -761,7 +773,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
         { class: 'result-actions' },
         h('button', { class: 'btn', type: 'button', onClick: onLeave }, '로비로'),
         recorder ? h('button', { class: 'btn', type: 'button', onClick: saveReplay }, '리플레이 저장') : null,
-        h('button', { class: 'btn btn-primary', type: 'button', onClick: () => onReturnToRoom?.() }, '대기실로 (재대결)'),
+        ranked ? null : h('button', { class: 'btn btn-primary', type: 'button', onClick: () => onReturnToRoom?.() }, '대기실로 (재대결)'),
       ),
     );
     resultOverlay.hidden = false;
@@ -918,6 +930,7 @@ export function createGameView({ canvas, socket, mapId, players, me, recorder, o
   return {
     el,
     updateRoom,
+    setRankedResult,
     setPing: (ms) => {
       ping.textContent = `${ms} ms`;
     },

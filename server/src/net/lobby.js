@@ -32,6 +32,10 @@ export class Lobby {
     this.profiles = profiles;
     /** 경기가 끝날 때 (room, result, record) — 랭킹전 레이팅 계산에 쓴다 */
     this.onMatchEnd = onMatchEnd;
+    /** 매칭(Matchmaker)이 거는 고리들 */
+    this.onSocketReady = null; // (socket) 로비 이벤트가 열린 소켓
+    this.onEnterRoom = null; // (uid) 방에 들어간다 — 대기열에서 빼야 한다
+    this.onRankedAbort = null; // (room, uids) 시작 전에 랭킹전 방이 깨졌다 — 남은 사람을 다시 줄 세운다
     this.countdownSec = countdownSec;
     this.reconnectGraceSec = reconnectGraceSec;
     this.rooms = new Map(); // roomId → room
@@ -118,6 +122,7 @@ export class Lobby {
     this.bind(socket, EV.LOBBY_READY, (body) => this.setReady(socket, body));
     this.bind(socket, EV.LOBBY_TEAM, (body) => this.setTeam(socket, body));
     this.bind(socket, EV.LOBBY_SETTINGS, (body) => this.setSettings(socket, body));
+    this.onSocketReady?.(socket);
 
     // 게임 명령은 응답 없이 경기로 넘긴다. 거부되면 경기가 GAME_REJECT를 보낸다.
     socket.on(EV.GAME_CMD, (cmd) => {
@@ -197,6 +202,7 @@ export class Lobby {
   create(socket, { name, mode }) {
     const { uid, nickname } = socket.data;
     const gameMode = GAME_MODES[mode] ? mode : '1v1';
+    this.onEnterRoom?.(uid);
     this.removeFromRoom(socket);
 
     const room = {
@@ -228,6 +234,7 @@ export class Lobby {
     if (room.ranked || room.status !== ROOM_STATUS.WAITING) return fail(ERR.ROOM_NOT_WAITING);
     if (room.players.length >= maxPlayersOf(room)) return fail(ERR.ROOM_FULL);
 
+    this.onEnterRoom?.(uid);
     this.removeFromRoom(socket);
     const [team0, team1] = teamCounts(room);
     this.addPlayer(room, socket, team1 < team0 ? 1 : 0); // 사람이 적은 팀으로
@@ -283,7 +290,7 @@ export class Lobby {
   setReady(socket, { ready }) {
     const room = this.roomOf(socket);
     if (!room) return fail(ERR.NOT_IN_ROOM);
-    if (room.status === ROOM_STATUS.PLAYING) return fail(ERR.ROOM_NOT_WAITING);
+    if (room.ranked || room.status === ROOM_STATUS.PLAYING) return fail(ERR.ROOM_NOT_WAITING); // 랭킹전은 자동 시작
 
     const player = room.players.find((p) => p.uid === socket.data.uid);
     player.ready = Boolean(ready);
@@ -293,13 +300,41 @@ export class Lobby {
     return ok({ room: this.detail(room) });
   }
 
-  addPlayer(room, socket, team) {
+  /**
+   * 랭킹전 방을 연다. 매칭이 정한 팀 그대로 넣고, 준비 없이 바로 카운트다운한다.
+   * 한 명이라도 접속이 끊겼거나 이미 방에 있으면 열지 않는다 (null).
+   */
+  openRankedRoom({ mode, mapId, players }) {
+    const sockets = players.map((p) => this.socketOfUid.get(p.uid));
+    if (sockets.some((socket, i) => !socket?.data.profile || this.roomOfUid.has(players[i].uid))) return null;
+
+    const room = {
+      id: randomUUID().slice(0, 8),
+      name: `랭킹전 ${GAME_MODES[mode].name}`,
+      hostUid: null,
+      status: ROOM_STATUS.WAITING,
+      mode,
+      mapId,
+      ranked: true,
+      players: [],
+      countdownTimer: null,
+      match: null,
+      createdAt: Date.now(),
+    };
+    this.rooms.set(room.id, room);
+    players.forEach((p, i) => this.addPlayer(room, sockets[i], p.team, { ready: true }));
+    this.maybeStartCountdown(room);
+    console.log('[랭킹전 방]', room.id, mode, mapId);
+    return room;
+  }
+
+  addPlayer(room, socket, team, { ready = false } = {}) {
     room.players.push({
       uid: socket.data.uid,
       nickname: socket.data.nickname,
       team,
       slot: null, // 경기를 시작할 때 맵의 시작 위치로 정한다
-      ready: false,
+      ready,
       connected: true,
       graceTimer: null,
       joinedAt: Date.now(),
@@ -326,6 +361,14 @@ export class Lobby {
     room.players = room.players.filter((p) => p.uid !== uid);
     room.match?.removePlayer(uid);
     if (room.status === ROOM_STATUS.STARTING) this.cancelCountdown(room);
+
+    // 랭킹전은 시작 전에 한 명이라도 나가면 깨진다. 남은 사람은 다시 매칭을 기다린다
+    if (room.ranked && !room.match) {
+      this.disband(room);
+      this.onRankedAbort?.(room, room.players.map((p) => p.uid));
+      this.broadcastList();
+      return;
+    }
 
     if (room.players.length === 0) {
       room.match?.stop();
@@ -430,9 +473,29 @@ export class Lobby {
     if (record) saveMatchResult(record).catch((err) => console.error('전적 저장 실패', err));
     this.onMatchEnd?.(room, result, record);
 
+    // 랭킹전은 같은 방에서 재대결하지 않는다: 방을 닫고 모두 로비로
+    if (room.ranked) {
+      this.disband(room);
+      this.broadcastList();
+      return;
+    }
+
     // 끊긴 채로 경기가 끝난 사람은 방에서 뺀다 (돌아올 자리를 남겨 둘 이유가 없다)
     for (const player of [...room.players]) {
       if (!player.connected) this.dropPlayer(room, player.uid);
+    }
+  }
+
+  /** 방을 없애고 남은 사람을 방에서 뺀다 (LOBBY_ROOM null) */
+  disband(room) {
+    clearTimeout(room.countdownTimer);
+    this.rooms.delete(room.id);
+    for (const player of room.players) {
+      clearTimeout(player.graceTimer);
+      this.roomOfUid.delete(player.uid);
+      const socket = this.socketOfUid.get(player.uid);
+      socket?.leave(channelOf(room.id));
+      socket?.emit(EV.LOBBY_ROOM, null);
     }
   }
 

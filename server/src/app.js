@@ -3,6 +3,7 @@ import { Server } from 'socket.io';
 import { NICKNAME_ERROR, validateNickname } from '@rune/shared/rules/nickname.js';
 import { createAuthMiddleware } from './net/auth.js';
 import { Lobby } from './net/lobby.js';
+import { Matchmaker } from './net/matchmaking.js';
 import { MemoryProfileStore } from './persistence/profiles.js';
 
 function sendJson(res, status, body, headers = {}) {
@@ -52,6 +53,8 @@ export function createGameServer({
   countdownSec,
   reconnectGraceSec,
   profiles = new MemoryProfileStore(),
+  matchIntervalMs = 1000,
+  random = Math.random,
 }) {
   const httpServer = createServer(createHttpHandler({ profiles, clientOrigins }));
   const io = new Server(httpServer, {
@@ -62,6 +65,7 @@ export function createGameServer({
   io.use(createAuthMiddleware(authMode, profiles));
 
   const lobby = new Lobby(io, { countdownSec, reconnectGraceSec, profiles });
+  const matchmaker = new Matchmaker({ lobby, profiles, intervalMs: matchIntervalMs, random });
   io.on('connection', (socket) => {
     console.log(`[접속] uid=${socket.data.uid} 닉네임=${socket.data.nickname ?? '(아직 없음)'}`);
     lobby.attach(socket);
@@ -69,9 +73,10 @@ export function createGameServer({
 
   const close = () =>
     new Promise((resolve) => {
+      matchmaker.dispose();
       lobby.dispose();
       io.close(() => resolve());
     });
 
-  return { httpServer, io, lobby, profiles, close };
+  return { httpServer, io, lobby, matchmaker, profiles, close };
 }

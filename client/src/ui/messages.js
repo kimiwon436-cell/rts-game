@@ -9,6 +9,8 @@ const MESSAGES = {
   [ERR.ROOM_NOT_WAITING]: '이미 게임이 시작된 방입니다.',
   [ERR.NOT_IN_ROOM]: '참가 중인 방이 없습니다.',
   [ERR.NOT_HOST]: '방장만 바꿀 수 있습니다.',
+  [ERR.IN_ROOM]: '방에서 나온 뒤에 랭킹전 매칭을 시작하세요.',
+  [ERR.MATCH_CANCELLED]: '상대가 나가 매칭이 취소됐습니다.',
   [ERR.TEAM_FULL]: '그 팀은 자리가 없습니다.',
   [ERR.INVALID_SETTINGS]: '그 방식과 맵은 함께 고를 수 없습니다.',
   [ERR.NO_PROFILE]: '닉네임을 먼저 정해 주세요.',

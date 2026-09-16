@@ -2,6 +2,7 @@ import { ROOM_NAME_MAX } from '@rune/shared/constants.js';
 import { ROOM_STATUS } from '@rune/shared/protocol.js';
 import { GAME_MODES, MAP_LIST } from '@rune/shared/map/maps/index.js';
 import { h } from './dom.js';
+import { createLeaderboardDialog, createRankedPanel } from './rankedPanel.js';
 
 const STATUS_LABEL = {
   [ROOM_STATUS.WAITING]: '가득 참',
@@ -9,7 +10,35 @@ const STATUS_LABEL = {
   [ROOM_STATUS.PLAYING]: '진행 중',
 };
 
-export function createLobbyScreen({ me, onCreate, onJoin, onOpenReplay, onSignOut }) {
+export function createLobbyScreen({
+  me,
+  profile,
+  onCreate,
+  onJoin,
+  onOpenReplay,
+  onSignOut,
+  onRankedJoin,
+  onRankedLeave,
+  onLoadLeaderboard,
+}) {
+  let dialog = null;
+  const ranked = createRankedPanel({
+    profile,
+    onJoin: onRankedJoin,
+    onLeave: onRankedLeave,
+    onLeaderboard: (mode) => {
+      dialog?.el.remove();
+      dialog = createLeaderboardDialog({
+        mode,
+        onLoad: onLoadLeaderboard,
+        onClose: () => {
+          dialog?.el.remove();
+          dialog = null;
+        },
+      });
+      el.append(dialog.el);
+    },
+  });
   const conn = h('span', { class: 'conn' }, '연결됨');
   const ping = h('span', { class: 'mono' }, '— ms');
   const list = h('ul', { class: 'room-list' });
@@ -88,6 +117,7 @@ export function createLobbyScreen({ me, onCreate, onJoin, onOpenReplay, onSignOu
         h(
           'div',
           { class: 'lobby-side' },
+          ranked.el,
           h(
             'section',
             { class: 'panel', 'aria-labelledby': 'create-title' },
@@ -144,5 +174,8 @@ export function createLobbyScreen({ me, onCreate, onJoin, onOpenReplay, onSignOu
       conn.textContent = online ? '연결됨' : '연결 끊김';
       conn.classList.toggle('offline', !online);
     },
+    setRankedStatus: (status) => ranked.setStatus(status),
+    setProfile: (next) => ranked.setProfile(next),
+    destroy: () => ranked.destroy(),
   };
 }
