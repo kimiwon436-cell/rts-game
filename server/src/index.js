@@ -2,6 +2,7 @@ import { config } from './config.js';
 import { initFirebaseAdmin } from './firebase.js';
 import { createGameServer } from './app.js';
 import { createProfileStore } from './persistence/profiles.js';
+import { createLoginIdLookup } from './persistence/loginIds.js';
 
 if (config.authMode === 'firebase') {
   const { projectId } = initFirebaseAdmin(config.firebaseServiceAccount);
@@ -13,6 +14,7 @@ if (config.authMode === 'firebase') {
 const { httpServer, close } = createGameServer({
   authMode: config.authMode,
   profiles: createProfileStore(), // Firebase면 Firestore, 아니면 메모리 (서버를 끄면 사라진다)
+  loginIds: createLoginIdLookup(), // 아이디 중복 확인 (Firebase Admin)
   clientOrigins: config.clientOrigins,
   reconnectGraceSec: config.reconnectGraceSec,
 });

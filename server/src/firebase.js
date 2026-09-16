@@ -4,6 +4,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 
 let auth = null;
 let db = null;
+let projectId = null;
 
 /** Base64로 인코딩한 서비스 계정 JSON으로 Admin SDK를 초기화한다. */
 export function initFirebaseAdmin(serviceAccountBase64) {
@@ -19,7 +20,8 @@ export function initFirebaseAdmin(serviceAccountBase64) {
   auth = getAuth(app);
   db = getFirestore(app);
   db.settings({ ignoreUndefinedProperties: true });
-  return { projectId: credentials.project_id };
+  projectId = credentials.project_id;
+  return { projectId };
 }
 
 /** Firebase ID 토큰을 검증하고 uid를 돌려준다. 실패하면 예외를 던진다. */
@@ -33,3 +35,7 @@ export async function verifyIdToken(token) {
 export function getDb() {
   return db;
 }
+
+/** Admin Auth와 프로젝트 ID (아이디 중복 확인용). 개발 모드에서는 null */
+export const getAdminAuth = () => auth;
+export const getProjectId = () => projectId;
