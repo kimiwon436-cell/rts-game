@@ -298,6 +298,106 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 
 ---
 
+### 리플레이 (`client/src/game/replayFile.js`, `ReplayPlayer.js`, `ReplayView.js`)
+
+서버에 저장하지 않고 **클라이언트가 받은 스냅샷을 그대로 녹화**한다. 경기가 끝나면 결과 화면에서 `.rcr` 파일로 내려받고,
+첫 화면이나 로비에서 열어 본다.
+
+- **시뮬레이션을 다시 돌리지 않는다.** 받았던 델타를 다시 적용할 뿐이라 규칙·밸런스가 바뀌어도 옛 리플레이가 깨지지 않는다.
+  대신 녹화한 사람의 시점이다 (내 자원·생산 대기열만 있다).
+- 파일: `{ format: 'rune-replay', version, mapId, mySlot, players[{nickname, slot}], result, snapshots[] }`를
+  gzip(`CompressionStream`)으로 줄인다. uid는 담지 않는다. 실측 6초 경기 기준 약 1/8.
+- **되감기**는 월드를 비우고(`reset`) 처음부터 다시 적용한다. 스냅샷이 작아 20분 경기도 수십 ms다.
+  탐색하는 동안은 `world.quiet`로 효과·알림을 만들지 않고, 끝나면 지형 캐시를 통째로 다시 그린다.
+- **재생 시계**는 서버 시계 대신 `ReplayPlayer.tick`(배속 0.5~8×)이고, `interpolateAt(tick − 1)`로 두 스냅샷 사이를 잇는다.
+- 재접속해도 같은 경기의 녹화는 이어서 쌓는다. 중간에 끼는 `full` 스냅샷이 상태를 다시 맞춘다.
+- `full` 스냅샷에는 이미 베인 나무(`felled`)도 싣는다 — 재접속 화면과 리플레이 되감기에서 나무가 되살아나지 않게.
+
+---
+
+### 입력: 마우스와 터치 (`client/src/input/Input.js`, `TouchControls.js`)
+
+마우스·키보드는 `Input`이, 손가락은 `TouchControls`가 맡는다 (`pointerType`으로 나눈다). 둘 다 같은 GameView 동작을 부른다.
+
+| 제스처 | 동작 |
+|---|---|
+| 탭 | 내 것은 선택, 병력·생산 건물을 고른 채면 그 자리에 명령 (마우스 왼쪽·오른쪽 클릭을 하나로) |
+| 두 번 탭 | 같은 종류 모두 선택 |
+| 한 손가락 끌기 | 화면 이동 |
+| 길게(380ms) 누른 채 끌기 | 사각형 선택 |
+| 두 손가락 | 확대 단계(1.28배마다 한 단계) + 화면 이동. 지형 청크가 정수 픽셀에 떨어지도록 연속 확대 대신 단계로 |
+| 건물 배치 중 끌기 | 미리보기가 손가락 48px 위를 따라오고, 떼면 짓는다 |
+
+- 손가락 화면 판정은 `(pointer: coarse)` 또는 `(hover: none)`. 이때 HUD에 `is-touch`를 붙여 단축키 글자를 숨기고 버튼을 키우며,
+  Esc·드래그 선택을 대신할 **취소 / 병력 전체 / 쉬는 농노** 버튼을 띄운다.
+- 레이아웃: `max-height: 520px`(가로 휴대폰)는 명령 카드를 오른쪽에 세로로, `max-width: 600px`(세로 휴대폰)는 아래 시트로.
+  노치는 `env(safe-area-inset-*)`로 피한다.
+
+---
+
+## 5-3. 팀전과 방 (`server/src/net/lobby.js`, `shared/src/map/`)
+
+- **슬롯과 팀**: 맵의 시작 위치에 번호(슬롯)를 붙이고 **짝수 슬롯 = 팀 0, 홀수 슬롯 = 팀 1**로 고정한다.
+  대기실에서는 팀만 고르고, 경기를 시작할 때 팀 안에서 먼저 들어온 순서대로 슬롯을 정한다.
+  유닛·건물의 `owner`는 여전히 슬롯이다 (명령·생산·자원은 플레이어 단위).
+- **적 판정은 팀으로**: `world.areEnemies(a, b)` — 표적 선정, 범위·연쇄 피해, 능력 대상, 공격 명령 검증이 모두 이것을 쓴다.
+  오라는 같은 팀에, 탑승·생산·자원 반납은 자기 것에만.
+- **승리**: 한 팀의 모든 플레이어가 패배하면 끝. 패배한 플레이어의 유닛·건물은 hp 0으로 무너뜨린다.
+  결과는 `{ winnerTeam, reason, tick }` — reason은 마지막으로 진 플레이어의 이유다.
+- **방**: `{ mode: '1v1'|'2v2'|'3v3', mapId, players[{ uid, nickname, team, slot, ready, connected }] }`.
+  방장만 방식·맵을 바꾸고(모드에 맞는 맵만), 바꾸면 모두의 준비가 풀린다. 팀 인원이 모두 차고 모두 준비하면 카운트다운.
+  들어오는 사람은 인원이 적은 팀으로 간다.
+
+---
+
+## 5-4. 랭킹전 (`server/src/net/matchmaking.js`, `shared/src/rules/rating.js`)
+
+- **대기열**은 방식(1대1·2대2·3대3)마다 따로다. 1초마다 레이팅 순으로 늘어놓고 연속한 (팀 크기 × 2)명씩 보며,
+  그 묶음에서 가장 오래 기다린 사람의 허용 차이(바로 ±150, 10초마다 +50, 최대 1000) 안이면 묶는다.
+  가장 오래 기다린 사람이 들어간 묶음을 먼저 잡는다.
+- **팀 나누기**: 레이팅 합의 차이가 가장 작은 조합 (4명 3가지, 6명 10가지를 모두 본다).
+- 맵은 그 방식의 맵 중 하나를 고른다. 로비에 **랭킹전 방**을 열어(목록에 안 보이고 끼어들 수 없다) 준비 없이 바로 카운트다운한다.
+  시작 전에 한 명이라도 나가면 방이 깨지고, 남은 사람은 대기열 앞쪽(60초 기다린 것으로)으로 돌아간다.
+  끝나면 재대결 없이 방이 닫힌다.
+- **레이팅**: 팀 평균 Elo. `기대 승률 = 1 / (1 + 10^((상대 팀 평균 − 우리 팀 평균) / 400))`,
+  변화 = K × (결과 − 기대 승률). K는 그 방식의 랭킹전 10판까지 48, 이후 32. 바닥 100. 무승부는 그대로.
+  이탈은 패배로 처리되므로 레이팅도 잃는다.
+- 경기가 끝나면 저장소에서 레이팅을 다시 읽어 계산하고(`applyRatings`, Firestore는 배치 한 번),
+  참가자에게 `ranked:result`와 갱신된 `session:profile`을 보낸다.
+- **순위표**: 방식별 상위 50명을 30초 캐시한다 (레이팅이 바뀌면 바로 비운다). 내 순위는 집계 쿼리(`count()`)로
+  "나보다 높은 사람 수 + 1"을 구해 문서를 읽지 않는다.
+
+---
+
+## 5-5. 채팅 (`server/src/net/chat.js`, `shared/src/rules/chat.js`)
+
+- 방(대기실·경기) 안에서만. **전체**는 방의 모두에게, **팀**은 보낸 사람과 같은 팀에게만 보낸다
+  (방 채널로 뿌리지 않고 플레이어마다 골라 보낸다).
+- 서버가 거른다: 제어 문자·제로폭 문자를 공백으로 바꾸고 연속 공백을 하나로, 150자, **5초에 5개**,
+  욕설 가리기(글자 사이에 공백·기호를 끼워도 잡는다, 목록은 `chat.js`에서 늘린다).
+- 방마다 최근 50개를 기억해, 들어오거나 다시 접속한 사람에게 **볼 수 있는 것만**(`chat:history`) 보낸다.
+  방이 닫히면 지운다. 들어옴·나감·연결 끊김·다시 접속·경기 시작은 안내 메시지(`from: null`)로 남긴다.
+- 로비는 `EventEmitter`라 매칭과 채팅이 같은 방 이벤트(`playerJoined`, `playerLeft`, `roomClosed` …)를 함께 듣는다.
+- 화면: 대기실은 늘 보이는 채팅 칸, 게임 화면은 미니맵 위에 떠서 10초 뒤 흐려지고
+  **Enter로 입력 칸을 연다** (Enter 보내기, Esc 닫기, Tab 전체·팀). 모바일은 '채팅' 버튼.
+
+---
+
+## 5-6. 튜토리얼 (`client/src/tutorial/`)
+
+- **서버 없이 브라우저에서 돈다.** 게임 서버의 시뮬레이션 코드(`server/src/game`)는 Node 전용 API를 쓰지 않아
+  그대로 브라우저에서 돌릴 수 있다. `LocalMatch`가 틱을 돌리고 소켓 흉내(`on`·`off`·`emit`)를 내서
+  실제 경기 화면(GameView)을 한 줄도 고치지 않고 쓴다. 로그인 없이 첫 화면에서도 할 수 있다.
+- 시뮬레이션 코드는 튜토리얼을 열 때만 받는다 (동적 import, 약 18KB gzip).
+- 단계(`steps.js`)마다 `start(ctx)`로 자원·적을 준비하고 `done(ctx)`를 틱마다 확인한다.
+  ctx에는 서버 월드와 화면 상태(카메라·선택)가 있어 "화면을 움직였는가", "금광에 채집 명령을 냈는가"처럼
+  플레이어가 실제로 한 일을 본다. 짓고 뽑는 동안은 4배속으로 감는다.
+- 단계: 화면 이동 → 선택 → 금 캐기 → 여러 유닛 선택 → 나무 베기 → 농가 → (빨리 감기) → 병영과 창병 →
+  전투(창병 대 척후 기병, 상성 체험) → 시대와 맹세 안내. 마치면 `localStorage`에 표시해 로비에서 알려 준다.
+- 테스트가 모든 단계를 플레이어 명령만으로 끝까지 진행해 본다 (단계를 바꾸면 이 테스트가 막힌 단계를 알려 준다).
+
+---
+
 ## 5-2. 맹세와 궁극 유닛 (`server/src/game/systems/abilities.js`)
 
 기획서 4장을 그대로 구현한 시스템. 규칙 데이터는 `shared/src/data/oaths.js`·`abilities.js`에 있다.
@@ -377,38 +477,32 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 
 ## 8. Firebase
 
-### 인증 흐름
+### 인증 흐름 (`client/src/auth.js`, `server/src/net/auth.js`, `server/src/persistence/profiles.js`)
 
-1. 클라이언트가 `signInAnonymously()`로 로그인한다 (나중에 Google 계정을 연결).
-2. ID 토큰을 Socket.IO 핸드셰이크에 담아 연결한다.
-3. 서버는 `io.use()` 미들웨어에서 Admin SDK로 토큰을 검증하고 `socket.data.uid`에 저장한다. 실패하면 연결을 거부한다.
+1. **가입·로그인**: 이메일 + 비밀번호 (Firebase Auth). `browserLocalPersistence`라 브라우저를 닫았다 열어도 로그인이 유지되고,
+   페이지를 열면 `onAuthStateChanged`가 저장된 로그인을 돌려줘 로그인 화면 없이 바로 접속한다. 비밀번호 재설정 메일도 Firebase가 보낸다.
+2. ID 토큰을 Socket.IO 핸드셰이크에 담아 연결한다 (`auth`를 함수로 넘겨 재연결마다 새 토큰). **닉네임은 보내지 않는다.**
+3. 서버 미들웨어가 Admin SDK로 토큰을 검증하고, 저장소에서 **프로필**(닉네임·레이팅·전적)을 읽어 `socket.data.profile`에 둔다.
+4. 접속하자마자 서버가 `session:profile`을 보낸다.
+   - 프로필이 있으면 로비 이벤트가 열린다.
+   - `null`이면(가입 직후) 로비 이벤트는 답하지 않고, 클라이언트가 `profile:create { nickname }`으로 닉네임을 정해야 열린다.
+     가입 폼에서 고른 닉네임을 접속하자마자 자동으로 보내고, 그사이 누가 가져갔으면 닉네임 화면에서 다시 고른다.
+5. **닉네임은 서버만 정한다.** 한글·영문·숫자·밑줄 2~12자(`shared/src/rules/nickname.js`), 운영진 사칭 단어 금지,
+   대소문자·전각을 무시한 키로 중복을 막는다. Firestore 트랜잭션으로 `nicknames/{key}`와 `users/{uid}`를 함께 쓴다.
+   가입 화면은 `GET /api/nickname?name=`으로 미리 확인만 한다 (실제 예약은 트랜잭션).
 
-```js
-// client/src/net/socket.js
-const socket = io(import.meta.env.VITE_SERVER_URL, {
-  auth: (cb) => { auth.currentUser.getIdToken().then((token) => cb({ token })); },
-});
-
-// server/src/net/auth.js
-io.use(async (socket, next) => {
-  try {
-    const { uid } = await getAuth().verifyIdToken(socket.handshake.auth.token);
-    socket.data.uid = uid;
-    next();
-  } catch {
-    next(new Error('UNAUTHORIZED'));
-  }
-});
-```
-
-`auth`를 함수로 넘기면 재연결할 때마다 새 토큰을 받는다.
+개발 모드(Firebase 없음)도 흐름은 같다. 계정은 브라우저 `localStorage`에 소금 친 SHA-256으로 저장하고(보안 수단 아님),
+토큰은 `dev:<32자리 hex>`, 프로필은 서버 메모리(`MemoryProfileStore`, 서버를 끄면 사라짐)에 둔다.
 
 ### Firestore 데이터 모델
 
 | 경로 | 필드 | 쓰기 권한 |
 |---|---|---|
-| `users/{uid}` | nickname, createdAt, matches, wins, losses, lastPlayedAt | nickname만 본인, 전적은 서버 |
+| `users/{uid}` | nickname, nicknameKey, ratings{1v1,2v2,3v3}, ranked{1v1,2v2,3v3:{wins,losses}}, matches, wins, losses, createdAt, lastPlayedAt | 서버만 |
+| `nicknames/{key}` | uid, nickname, createdAt — 닉네임 예약 (key = NFKC 소문자) | 서버만 |
 | `matches/{matchId}` | matchId, mapId, players[{slot, uid, nickname, defeated}], uids[], winnerSlot, reason, durationSec, startedAt, endedAt | 서버만 |
+
+모든 쓰기는 게임 서버(Admin SDK)만 한다. 규칙은 로그인한 사람에게 읽기만 허용한다. 이메일은 Firestore에 저장하지 않는다.
 
 쓰기는 경기가 끝날 때 배치 한 번(`server/src/persistence/matches.js`), 경기당 1 + 인원 수. 틱마다 쓰지 않는다.
 `matchId`는 `방id-시작시각`이라 같은 경기를 두 번 써도 덮어쓰기라 안전하다. `uids` 배열은 "내 경기만 보기"(array-contains) 색인용이다.

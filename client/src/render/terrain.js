@@ -47,6 +47,11 @@ export class TerrainCache {
     return canvas;
   }
 
+  /** 지형을 통째로 다시 그린다 (리플레이 되감기) */
+  invalidateAll() {
+    this.chunks.clear();
+  }
+
   /** 칸이 바뀌었을 때 그 칸이 든 청크를 다음 프레임에 다시 그리게 한다 */
   invalidateTile(tx, ty) {
     this.chunks.delete(Math.floor(ty / CHUNK_TILES) * this.chunksX + Math.floor(tx / CHUNK_TILES));

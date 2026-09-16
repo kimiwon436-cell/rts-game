@@ -33,9 +33,15 @@ const MAX_DRIFT = 8; // 이만큼 어긋나면 부드럽게 맞추지 않고 그
  * 좌표는 타일 단위 (서버와 같다).
  */
 export class ClientWorld {
-  constructor(map, mySlot) {
+  /**
+   * @param {object} map
+   * @param {number} mySlot
+   * @param {Array<{ slot: number, team?: number }>} [players] 시작 정보. 스냅샷이 오기 전에도 팀을 알 수 있게 받는다
+   */
+  constructor(map, mySlot, players = []) {
     this.map = map;
     this.mySlot = mySlot;
+    this.startTeams = new Map(players.map((p) => [p.slot, p.team ?? p.slot]));
     this.tiles = new Uint8Array(map.tiles);
     this.units = new Map();
     this.buildings = new Map();
@@ -56,6 +62,10 @@ export class ClientWorld {
     this.occupancyDirty = true;
     /** @type {(tile: number) => void} */
     this.onTreeFelled = null;
+    /** 지형을 통째로 다시 그려야 할 때 (전체 스냅샷·되감기) */
+    this.onTerrainReset = null;
+    /** true면 효과와 이벤트 알림 없이 상태만 적용한다 (리플레이 탐색) */
+    this.quiet = false;
     /** @type {(event: Array) => void} */
     this.onEvent = null;
   }
@@ -70,7 +80,11 @@ export class ClientWorld {
    * full이면 지난 상태를 버리고 통째로 다시 맞춘다 (첫 입장·재접속).
    */
   applySnapshot(snap) {
-    if (snap.full) this.reset();
+    if (snap.full) {
+      this.reset();
+      for (const tile of snap.felled ?? []) this.tiles[tile] = TERRAIN.GRASS;
+      if (snap.felled?.length) this.onTerrainReset?.();
+    }
     this.tick = snap.t;
     this.serverTick = snap.t;
     if (snap.me) this.me = decodePlayer(snap.me);
@@ -141,18 +155,24 @@ export class ClientWorld {
     for (const event of snap.ev ?? []) {
       if (event[0] === GAME_EVENT.TREE_FELLED) {
         this.tiles[event[1]] = TERRAIN.GRASS;
-        this.onTreeFelled?.(event[1]);
+        if (!this.quiet) this.onTreeFelled?.(event[1]);
       }
+      if (this.quiet) continue; // 리플레이 빨리 감기: 상태만 따라가고 효과·알림은 건너뛴다
       this.addCombatEffect(event, removed);
       this.onEvent?.(event);
     }
   }
 
-  /** 전체 스냅샷을 받기 전에 지난 상태를 비운다 (재접속) */
+  /** 전체 스냅샷을 받기 전에 지난 상태를 비운다 (재접속·리플레이 되감기) */
   reset() {
     this.units.clear();
     this.buildings.clear();
     this.mineAmounts.clear();
+    this.tiles.set(this.map.tiles); // 베였던 나무를 되살린다
+    this.publicPlayers.clear();
+    this.ages.clear();
+    this.serverTick = -1;
+    this.tick = -1;
     this.queues.clear();
     this.rallies.clear();
     this.cooldowns.clear();
@@ -243,7 +263,11 @@ export class ClientWorld {
       this.renderTick += ((dt * 1000) / TICK_MS) * (1 + drift);
     }
 
-    const now = this.renderTick;
+    this.interpolateAt(this.renderTick);
+  }
+
+  /** 주어진 시점(소수 틱)의 위치로 유닛을 옮긴다. 리플레이는 자기 시계로 이 값을 준다. */
+  interpolateAt(now) {
     for (const unit of this.units.values()) {
       const samples = unit.samples;
       while (samples.length > 2 && samples[1].t <= now) samples.shift();
@@ -271,6 +295,25 @@ export class ClientWorld {
 
   isMine(entity) {
     return entity.owner === this.mySlot;
+  }
+
+  teamOf(slot) {
+    return this.publicPlayers.get(slot)?.team ?? this.startTeams.get(slot) ?? slot;
+  }
+
+  /** 다른 팀의 것 (공격 대상) */
+  isEnemy(entity) {
+    return this.teamOf(entity.owner) !== this.teamOf(this.mySlot);
+  }
+
+  /** 같은 팀이지만 내 것은 아닌 것 (팀원) */
+  isAlly(entity) {
+    return entity.owner !== this.mySlot && !this.isEnemy(entity);
+  }
+
+  /** 'mine' | 'ally' | 'enemy' */
+  relationOf(entity) {
+    return this.isMine(entity) ? 'mine' : this.isEnemy(entity) ? 'enemy' : 'ally';
   }
 
   /** 내가 맺은 맹세 (없으면 null) */

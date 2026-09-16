@@ -744,8 +744,15 @@ export function drawEffect(ctx, effect, now) {
   return false;
 }
 
-export function drawSelectionRing(ctx, x, y, rx, mine) {
-  ctx.strokeStyle = mine ? 'rgba(120, 230, 140, 0.95)' : 'rgba(240, 120, 110, 0.95)';
+const RING_COLORS = {
+  mine: 'rgba(120, 230, 140, 0.95)',
+  ally: 'rgba(240, 205, 100, 0.95)', // 팀원
+  enemy: 'rgba(240, 120, 110, 0.95)',
+};
+
+/** relation: 'mine' | 'ally' | 'enemy' */
+export function drawSelectionRing(ctx, x, y, rx, relation) {
+  ctx.strokeStyle = RING_COLORS[relation] ?? RING_COLORS.enemy;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.ellipse(x, y, rx, rx * 0.5, 0, 0, TAU);
