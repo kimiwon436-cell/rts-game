@@ -1,21 +1,20 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // 프로필·닉네임·경기 기록은 게임 서버(Admin SDK)만 쓴다.
+    // 닉네임 중복 검사와 레이팅이 서버를 거치지 않고 바뀌면 안 되기 때문이다.
+    // 로그인한 사람은 읽을 수 있다 (순위표·전적 보기). 이메일은 Firestore에 저장하지 않는다.
     match /users/{uid} {
       allow read: if request.auth != null;
-      allow create: if request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['nickname', 'createdAt'])
-        && request.resource.data.nickname is string
-        && request.resource.data.nickname.size() <= 16
-        && request.resource.data.createdAt == request.time;
-      allow update: if request.auth.uid == uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nickname'])
-        && request.resource.data.nickname is string
-        && request.resource.data.nickname.size() <= 16;
+      allow write: if false;
+    }
+    match /nicknames/{key} {
+      allow read: if request.auth != null;
+      allow write: if false;
     }
     match /matches/{matchId} {
       allow read: if request.auth != null;
-      allow write: if false; // 서버(Admin SDK)만 기록
+      allow write: if false;
     }
   }
 }

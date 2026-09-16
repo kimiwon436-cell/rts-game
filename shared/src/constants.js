@@ -12,7 +12,7 @@ export const MAX_PLAYERS = 2;
 /** 모두 준비하면 게임 시작까지 기다리는 시간 */
 export const START_COUNTDOWN_SEC = 3;
 
-export const NICKNAME_MAX = 16;
+export { NICKNAME_MAX } from './rules/nickname.js';
 export const ROOM_NAME_MAX = 24;
 
 /** 슬롯별 플레이어 색. 0 = P1(왼쪽 아래), 1 = P2(오른쪽 위) */

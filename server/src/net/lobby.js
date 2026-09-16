@@ -2,15 +2,21 @@ import { randomUUID } from 'node:crypto';
 import { EV, ERR, ROOM_STATUS } from '@rune/shared/protocol.js';
 import { MAX_PLAYERS, ROOM_NAME_MAX, START_COUNTDOWN_SEC } from '@rune/shared/constants.js';
 import { DEFAULT_MAP_ID } from '@rune/shared/map/maps/index.js';
+import { NICKNAME_ERROR } from '@rune/shared/rules/nickname.js';
 import { cleanText } from './auth.js';
 import { Match } from '../game/Match.js';
 import { saveMatchResult } from '../persistence/matches.js';
+import { MemoryProfileStore, ProfileError } from '../persistence/profiles.js';
 
 const LOBBY_CHANNEL = 'lobby';
 const channelOf = (roomId) => `room:${roomId}`;
 
 const ok = (data = {}) => ({ ok: true, ...data });
-const fail = (error) => ({ ok: false, error });
+const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
+
+/** 클라이언트에 보내는 프로필 (저장소 내부 필드는 빼고) */
+export const publicProfile = (p) =>
+  p && { uid: p.uid, nickname: p.nickname, ratings: p.ratings, ranked: p.ranked, wins: p.wins, losses: p.losses, matches: p.matches };
 
 /**
  * 방 목록, 입장, 준비, 시작 카운트다운, 경기 수명 관리. 상태는 서버 메모리에만 있다.
@@ -18,13 +24,32 @@ const fail = (error) => ({ ok: false, error });
  * 경기 중에 연결이 끊기면 유예 시간 동안 자리를 지켜 주고, 그 안에 돌아오면 이어서 한다.
  */
 export class Lobby {
-  constructor(io, { countdownSec = START_COUNTDOWN_SEC, reconnectGraceSec = 60 } = {}) {
+  constructor(io, { countdownSec = START_COUNTDOWN_SEC, reconnectGraceSec = 60, profiles = new MemoryProfileStore() } = {}) {
     this.io = io;
+    this.profiles = profiles;
     this.countdownSec = countdownSec;
     this.reconnectGraceSec = reconnectGraceSec;
     this.rooms = new Map(); // roomId → room
     this.roomOfUid = new Map(); // uid → roomId
     this.socketOfUid = new Map(); // uid → socket
+  }
+
+  /** ack 응답이 있는 이벤트를 연결한다. 처리 함수는 값이나 Promise를 돌려준다. */
+  bind(socket, event, handler) {
+    socket.on(event, (payload, ack) => {
+      if (typeof payload === 'function') {
+        ack = payload;
+        payload = undefined;
+      }
+      const reply = typeof ack === 'function' ? ack : () => {};
+      const body = payload !== null && typeof payload === 'object' ? payload : {};
+      Promise.resolve()
+        .then(() => handler(body))
+        .then(reply, (err) => {
+          console.error('명령 처리 중 오류', event, err);
+          reply(fail(ERR.INVALID_PAYLOAD));
+        });
+    });
   }
 
   attach(socket) {
@@ -36,42 +61,60 @@ export class Lobby {
       previous.disconnect(true);
     }
     this.socketOfUid.set(uid, socket);
-    socket.join(LOBBY_CHANNEL);
 
-    const handle = (event, handler) => {
-      socket.on(event, (payload, ack) => {
-        if (typeof payload === 'function') {
-          ack = payload;
-          payload = undefined;
-        }
-        const reply = typeof ack === 'function' ? ack : () => {};
-        const body = payload !== null && typeof payload === 'object' ? payload : {};
-        try {
-          reply(handler(body));
-        } catch (err) {
-          console.error('명령 처리 중 오류', event, err);
-          reply(fail(ERR.INVALID_PAYLOAD));
-        }
-      });
-    };
-
-    handle(EV.NET_PING, () => ok({ serverTime: Date.now() }));
-    handle(EV.LOBBY_LIST, () => ok({ rooms: this.summaries() }));
-    handle(EV.LOBBY_CREATE, (body) => this.create(socket, body));
-    handle(EV.LOBBY_JOIN, (body) => this.join(socket, body));
-    handle(EV.LOBBY_LEAVE, () => this.leave(socket));
-    handle(EV.LOBBY_READY, (body) => this.setReady(socket, body));
-
-    // 게임 명령은 응답 없이 경기로 넘긴다. 거부되면 경기가 GAME_REJECT를 보낸다.
-    socket.on(EV.GAME_CMD, (cmd) => {
-      this.roomOf(socket)?.match?.enqueue(uid, cmd);
-    });
-
+    this.bind(socket, EV.NET_PING, () => ok({ serverTime: Date.now() }));
+    this.bind(socket, EV.PROFILE_CREATE, (body) => this.createProfile(socket, body));
     socket.on('disconnect', (reason) => {
       console.log('[접속 종료]', uid, reason);
       if (this.socketOfUid.get(uid) !== socket) return; // 새 세션으로 교체된 소켓
       this.socketOfUid.delete(uid);
       this.handleDisconnect(socket);
+    });
+
+    // 가입만 하고 닉네임을 아직 정하지 않았으면 로비에 들이지 않는다
+    if (socket.data.profile) this.enterLobby(socket);
+    else socket.emit(EV.SESSION_PROFILE, null);
+  }
+
+  /** 닉네임을 정해 프로필을 만든다 (가입 직후 한 번). 중복은 저장소가 트랜잭션으로 막는다. */
+  async createProfile(socket, { nickname }) {
+    if (socket.data.profile) return fail(ERR.PROFILE_EXISTS);
+    let profile;
+    try {
+      profile = await this.profiles.create(socket.data.uid, nickname);
+    } catch (err) {
+      if (!(err instanceof ProfileError)) {
+        console.error('[프로필 만들기 실패]', socket.data.uid, err);
+        return fail(ERR.UNAVAILABLE);
+      }
+      if (err.code === 'PROFILE_EXISTS') return fail(ERR.PROFILE_EXISTS);
+      if (err.code === NICKNAME_ERROR.TAKEN) return fail(ERR.NICKNAME_TAKEN);
+      return fail(ERR.NICKNAME_INVALID, { reason: err.code });
+    }
+    console.log('[가입]', socket.data.uid, profile.nickname);
+    socket.data.profile = profile;
+    socket.data.nickname = profile.nickname;
+    if (socket.connected) this.enterLobby(socket);
+    return ok({ profile: publicProfile(profile) });
+  }
+
+  /** 프로필이 있는 소켓에 로비 이벤트를 열고, 남아 있던 방이 있으면 다시 붙인다 */
+  enterLobby(socket) {
+    if (socket.data.inLobby) return;
+    socket.data.inLobby = true;
+    const { uid } = socket.data;
+    socket.join(LOBBY_CHANNEL);
+    socket.emit(EV.SESSION_PROFILE, publicProfile(socket.data.profile));
+
+    this.bind(socket, EV.LOBBY_LIST, () => ok({ rooms: this.summaries() }));
+    this.bind(socket, EV.LOBBY_CREATE, (body) => this.create(socket, body));
+    this.bind(socket, EV.LOBBY_JOIN, (body) => this.join(socket, body));
+    this.bind(socket, EV.LOBBY_LEAVE, () => this.leave(socket));
+    this.bind(socket, EV.LOBBY_READY, (body) => this.setReady(socket, body));
+
+    // 게임 명령은 응답 없이 경기로 넘긴다. 거부되면 경기가 GAME_REJECT를 보낸다.
+    socket.on(EV.GAME_CMD, (cmd) => {
+      this.roomOf(socket)?.match?.enqueue(uid, cmd);
     });
 
     // 방에 남아 있던 uid면 다시 붙여 준다 (재접속, 또는 다른 탭에서 이어받기)

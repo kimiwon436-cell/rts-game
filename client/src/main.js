@@ -1,38 +1,40 @@
 import './styles.css';
 import { EV, ERR } from '@rune/shared/protocol.js';
-import { NICKNAME_MAX } from '@rune/shared/constants.js';
-import { FIREBASE_CONFIG, SERVER_URL } from './config.js';
-import { signIn, authErrorMessage } from './auth.js';
-import { connectToServer, request, startPing } from './net/socket.js';
-import { readStorage, writeStorage } from './ui/dom.js';
+import { NICKNAME_MESSAGES } from '@rune/shared/rules/nickname.js';
+import { SERVER_URL } from './config.js';
+import { authErrorMessage, createAuth } from './auth.js';
+import { checkNickname, connectToServer, request, startPing } from './net/socket.js';
 import { toast } from './ui/toast.js';
 import { errorMessage } from './ui/messages.js';
-import { createTitleScreen } from './ui/titleScreen.js';
+import { createAuthScreen } from './ui/authScreen.js';
+import { createNicknameScreen } from './ui/nicknameScreen.js';
+import { createStatusScreen } from './ui/statusScreen.js';
 import { createLobbyScreen } from './ui/lobbyScreen.js';
 import { createRoomScreen } from './ui/roomScreen.js';
 import { createGameView } from './game/GameView.js';
 import { createReplayView } from './game/ReplayView.js';
 import { createRecorder, decodeReplay, pickReplayFile } from './game/replayFile.js';
 
-const NICKNAME_KEY = 'rune.nickname';
 const app = document.getElementById('app');
 const canvas = document.getElementById('game');
 
 const state = {
-  session: null, // { mode, uid, getToken, saveProfile }
-  nickname: '',
+  auth: null, // createAuth() 결과
+  session: null, // { mode, uid, email, getToken } — 로그인한 계정
+  profile: null, // 서버가 보낸 프로필 { uid, nickname, ratings, ... }
+  pendingNickname: null, // 가입 폼에서 고른 닉네임. 접속하자마자 예약한다
   socket: null,
   stopPing: null,
   ping: null,
   rooms: [],
   room: null, // 내가 들어간 방
   recorder: null, // 지금 경기의 리플레이 녹화 (재접속해도 이어서 쌓는다)
-  view: null, // 'title' | 'lobby' | 'room' | 'game' | 'replay'
+  view: null, // 'loading' | 'auth' | 'nickname' | 'lobby' | 'room' | 'game' | 'replay' | 'status'
   screen: null,
 };
 if (import.meta.env.DEV) window.__rune = state;
 
-const me = () => ({ uid: state.session.uid, nickname: state.nickname });
+const me = () => ({ uid: state.session.uid, nickname: state.profile?.nickname ?? '' });
 
 /** 화면을 바꾼다. 이전 화면은 destroy로 정리한다. */
 function show(view, screen) {
@@ -41,52 +43,126 @@ function show(view, screen) {
   state.screen = screen;
   app.replaceChildren(screen.el);
   if (state.ping != null) screen.setPing?.(state.ping);
+  screen.focus?.();
 }
 
-// ---------- 입장 ----------
+const showStatus = (title, message = '', actions = []) => show('status', createStatusScreen({ title, message, actions }));
 
-function showTitle(errorText = '') {
-  closeSocket();
-  const screen = createTitleScreen({
-    nickname: readStorage(NICKNAME_KEY) ?? '',
-    modeLabel: FIREBASE_CONFIG
-      ? 'Firebase 익명 로그인으로 접속합니다.'
-      : '개발 모드 · Firebase 설정이 없어 게스트로 접속합니다.',
-    onSubmit: enter,
+// ---------- 로그인 ----------
+
+async function boot() {
+  showStatus('불러오는 중…');
+  try {
+    state.auth = await createAuth();
+  } catch (err) {
+    console.error('[로그인 서비스]', err);
+    showStatus('로그인 서비스를 불러오지 못했습니다', authErrorMessage(err), [
+      { label: '새로고침', primary: true, onClick: () => location.reload() },
+    ]);
+    return;
+  }
+  // 저장된 로그인이 있으면 바로 들어가고, 없으면 로그인 화면을 띄운다 (브라우저를 닫았다 열어도 유지)
+  state.auth.onChange(onSession);
+}
+
+function onSession(session) {
+  if (!session) {
+    state.session = null;
+    state.profile = null;
+    closeSocket();
+    if (state.view !== 'replay') showAuth();
+    return;
+  }
+  if (state.session?.uid === session.uid && state.socket) return; // 같은 계정의 토큰 갱신
+  state.session = session;
+  connect();
+}
+
+function showAuth(errorText = '') {
+  const screen = createAuthScreen({
+    mode: state.auth.mode,
+    onSignIn: (email, password) => state.auth.signIn(email, password),
+    onSignUp: async (email, password, nickname) => {
+      state.pendingNickname = nickname; // 계정이 만들어지면 접속하자마자 이 닉네임을 예약한다
+      try {
+        await state.auth.signUp(email, password);
+      } catch (err) {
+        state.pendingNickname = null;
+        throw err;
+      }
+    },
+    onResetPassword: (email) => state.auth.sendPasswordReset(email),
+    onCheckNickname: checkNickname,
     onOpenReplay: openReplay,
   });
-  show('title', screen);
+  show('auth', screen);
   if (errorText) screen.showError(errorText);
-  screen.focus();
 }
 
-async function enter(nickname) {
-  state.nickname = nickname.slice(0, NICKNAME_MAX);
-  writeStorage(NICKNAME_KEY, state.nickname);
+async function signOut() {
+  closeSocket();
+  state.profile = null;
+  await state.auth.signOut(); // onSession(null)이 로그인 화면을 띄운다
+}
 
-  if (!state.session) {
-    try {
-      state.session = await signIn();
-    } catch (err) {
-      console.error('[로그인 실패]', err);
-      throw new Error(authErrorMessage(err));
-    }
-  }
-  state.session
-    .saveProfile(state.nickname)
-    .catch((err) => console.warn('[Firestore] 프로필을 저장하지 못했습니다', err));
+function profileErrorMessage(res) {
+  if (res.error === ERR.NICKNAME_INVALID) return NICKNAME_MESSAGES[res.reason] ?? errorMessage(res.error);
+  return errorMessage(res.error);
+}
 
-  await openSocket();
-  showLobby();
+/** 닉네임을 예약한다. 성공하면 서버가 SESSION_PROFILE로 알려 로비로 간다. 실패하면 문장을 돌려준다. */
+async function claimNickname(nickname) {
+  const res = await request(state.socket, EV.PROFILE_CREATE, { nickname });
+  if (res.ok) return null;
+  return profileErrorMessage(res);
+}
+
+function showNicknameScreen(value = '', errorText = '') {
+  show(
+    'nickname',
+    createNicknameScreen({
+      email: state.session?.email,
+      value,
+      errorText,
+      onSubmit: claimNickname,
+      onCheckNickname: checkNickname,
+      onSignOut: signOut,
+    }),
+  );
 }
 
 // ---------- 소켓 ----------
 
+async function connect() {
+  showStatus('게임 서버에 연결하는 중…');
+  try {
+    await openSocket();
+  } catch (err) {
+    showStatus('연결하지 못했습니다', err.message, [
+      { label: '다시 시도', primary: true, onClick: connect },
+      { label: '로그아웃', onClick: signOut },
+    ]);
+  }
+}
+
 function openSocket() {
   closeSocket();
-  const socket = connectToServer({ getToken: state.session.getToken, getNickname: () => state.nickname });
+  const socket = connectToServer({ getToken: state.session.getToken });
   state.socket = socket;
 
+  socket.on(EV.SESSION_PROFILE, async (profile) => {
+    state.profile = profile;
+    if (profile) {
+      state.pendingNickname = null;
+      if (['status', 'auth', 'nickname'].includes(state.view)) showLobby();
+      return;
+    }
+    // 가입 폼에서 고른 닉네임이 있으면 바로 예약한다. 먼저 누가 가져갔으면 닉네임 화면에서 다시 고른다
+    const wanted = state.pendingNickname;
+    state.pendingNickname = null;
+    const problem = wanted ? await claimNickname(wanted) : '';
+    if (problem !== null) showNicknameScreen(wanted ?? '', problem);
+  });
   socket.on(EV.LOBBY_UPDATE, (rooms) => {
     state.rooms = rooms;
     if (state.view === 'lobby') state.screen.setRooms(rooms);
@@ -101,7 +177,11 @@ function openSocket() {
     startGame(payload, { resume: true });
   });
   socket.on(EV.SESSION_REPLACED, () => {
-    showTitle('다른 탭에서 같은 계정으로 접속해 이 탭의 연결이 끊어졌습니다.');
+    closeSocket();
+    showStatus('다른 곳에서 접속했습니다', '같은 계정으로 다른 탭이나 기기에서 접속해 이 화면의 연결이 끊어졌습니다.', [
+      { label: '여기서 다시 접속', primary: true, onClick: connect },
+      { label: '로그아웃', onClick: signOut },
+    ]);
   });
   socket.on('disconnect', (reason) => {
     state.screen?.setOnline?.(false);
@@ -124,25 +204,24 @@ function openSocket() {
         resolve();
         return;
       }
-      // 재연결: 방에 남아 있었다면 서버가 LOBBY_ROOM(경기 중이면 GAME_RESUME도)으로 알려 준다.
-      // 자리가 이미 없어졌으면 LOBBY_ROOM null이 와서 로비로 돌아간다.
+      // 재연결: 서버가 SESSION_PROFILE, LOBBY_ROOM(경기 중이면 GAME_RESUME도)으로 상태를 다시 알려 준다
       toast('서버에 다시 연결했습니다.');
     });
 
     socket.on('connect_error', (err) => {
-      if (err.message === ERR.UNAUTHORIZED) {
-        if (firstConnect) {
+      const known = err.message === ERR.UNAUTHORIZED || err.message === ERR.UNAVAILABLE;
+      if (!firstConnect) {
+        if (known) {
           closeSocket();
-          reject(new Error(errorMessage(ERR.UNAUTHORIZED)));
-        } else {
-          showTitle(errorMessage(ERR.UNAUTHORIZED));
+          showStatus('연결이 끊어졌습니다', errorMessage(err.message), [
+            { label: '다시 접속', primary: true, onClick: connect },
+            { label: '로그아웃', onClick: signOut },
+          ]);
         }
         return;
       }
-      if (firstConnect) {
-        closeSocket();
-        reject(new Error(`게임 서버(${SERVER_URL})에 연결할 수 없습니다. 서버가 켜져 있는지 확인하세요.`));
-      }
+      closeSocket();
+      reject(new Error(known ? errorMessage(err.message) : `게임 서버(${SERVER_URL})에 연결할 수 없습니다. 서버가 켜져 있는지 확인하세요.`));
     });
   });
 }
@@ -161,7 +240,14 @@ function closeSocket() {
 // ---------- 로비와 대기실 ----------
 
 function showLobby() {
-  const screen = createLobbyScreen({ me: me(), onCreate: createRoom, onJoin: joinRoom, onOpenReplay: openReplay });
+  const screen = createLobbyScreen({
+    me: me(),
+    profile: state.profile,
+    onCreate: createRoom,
+    onJoin: joinRoom,
+    onOpenReplay: openReplay,
+    onSignOut: signOut,
+  });
   show('lobby', screen);
   screen.setOnline(Boolean(state.socket?.connected));
   screen.setRooms(state.rooms);
@@ -259,16 +345,19 @@ async function openReplay() {
     toast(err.message, { error: true });
     return;
   }
-  // 로비에서 열었으면 로비로, 로그인 전 첫 화면에서 열었으면 첫 화면으로 돌아간다
-  const fromLobby = Boolean(state.socket);
   show(
     'replay',
     createReplayView({
       canvas,
       replay,
-      onExit: () => (fromLobby ? showLobby() : showTitle()),
+      // 로그인해 있으면 로비로, 로그인 화면에서 열었으면 로그인 화면으로
+      onExit: () => {
+        if (!state.session) showAuth();
+        else if (state.profile && state.socket) showLobby();
+        else connect();
+      },
     }),
   );
 }
 
-showTitle();
+boot();

@@ -26,14 +26,27 @@ after(async () => {
   await server.close();
 });
 
+/**
+ * 개발용 토큰으로 접속한다. 접속하자마자 오는 프로필 알림을 놓치지 않게 바로 기다리기 시작하고,
+ * 프로필이 없으면(처음 접속) 이름으로 만든다.
+ */
 function player(name, token = `dev:${name}-test-0001`) {
-  const socket = connect(url, { transports: ['websocket'], forceNew: true, auth: { token, nickname: name } });
+  const socket = connect(url, { transports: ['websocket'], forceNew: true, auth: { token } });
+  socket.profileReady = once(socket, EV.SESSION_PROFILE).then(async ([profile]) => {
+    if (profile) return profile;
+    const res = await socket.emitWithAck(EV.PROFILE_CREATE, { nickname: name });
+    if (!res.ok) throw new Error(`프로필을 만들지 못했습니다: ${res.error}`);
+    return res.profile;
+  });
+  socket.profileReady.catch(() => {});
   sockets.push(socket);
   return socket;
 }
 
+/** 접속하고 프로필까지 준비되면 (로비 이벤트를 쓸 수 있으면) 돌려준다 */
 async function connected(socket) {
   if (!socket.connected) await once(socket, 'connect');
+  await socket.profileReady;
   return socket;
 }
 

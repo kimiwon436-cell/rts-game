@@ -3,6 +3,7 @@
 export const EV = Object.freeze({
   // 클라이언트 → 서버 (로비 이벤트는 ack 콜백으로 응답)
   NET_PING: 'net:ping',
+  PROFILE_CREATE: 'profile:create', // { nickname } — 가입 직후 한 번
   LOBBY_LIST: 'lobby:list',
   LOBBY_CREATE: 'lobby:create', // { name }
   LOBBY_JOIN: 'lobby:join', // { roomId }
@@ -11,6 +12,7 @@ export const EV = Object.freeze({
   GAME_CMD: 'game:cmd', // { seq, type, ... } — 응답 없음. 거부되면 GAME_REJECT
 
   // 서버 → 클라이언트
+  SESSION_PROFILE: 'session:profile', // 접속하자마자: 프로필 | null (null이면 닉네임부터 정한다)
   LOBBY_UPDATE: 'lobby:update', // RoomSummary[]
   LOBBY_ROOM: 'lobby:room', // RoomDetail | null
   GAME_COUNTDOWN: 'game:countdown', // { seconds } — seconds가 0이면 취소
@@ -29,6 +31,11 @@ export const ERR = Object.freeze({
   ROOM_FULL: 'ROOM_FULL',
   ROOM_NOT_WAITING: 'ROOM_NOT_WAITING',
   NOT_IN_ROOM: 'NOT_IN_ROOM',
+  NO_PROFILE: 'NO_PROFILE', // 닉네임을 정하기 전에는 로비를 쓸 수 없다
+  PROFILE_EXISTS: 'PROFILE_EXISTS',
+  NICKNAME_INVALID: 'NICKNAME_INVALID', // 자세한 이유는 응답의 reason
+  NICKNAME_TAKEN: 'NICKNAME_TAKEN',
+  UNAVAILABLE: 'UNAVAILABLE', // 저장소 오류 등 잠시 뒤 다시 시도
 });
 
 export const ROOM_STATUS = Object.freeze({

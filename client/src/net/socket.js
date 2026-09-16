@@ -4,18 +4,33 @@ import { SERVER_URL } from '../config.js';
 
 /**
  * 게임 서버에 연결한다. auth를 함수로 넘겨서 재연결할 때마다 새 토큰을 넣는다.
- * (Firebase ID 토큰은 1시간마다 만료된다)
+ * (Firebase ID 토큰은 1시간마다 만료된다. getIdToken이 알아서 새로 받는다)
+ * 닉네임은 보내지 않는다 — 서버에 저장된 프로필의 닉네임만 쓴다.
  */
-export function connectToServer({ getToken, getNickname }) {
+export function connectToServer({ getToken }) {
   return io(SERVER_URL, {
     transports: ['websocket'],
     auth: (cb) => {
       getToken().then(
-        (token) => cb({ token, nickname: getNickname() }),
-        () => cb({ token: '', nickname: getNickname() }),
+        (token) => cb({ token }),
+        () => cb({ token: '' }),
       );
     },
   });
+}
+
+/**
+ * 가입 화면에서 닉네임을 쓸 수 있는지 미리 묻는다.
+ * 서버에 닿지 않으면 { available: null } — 확인을 건너뛰고 가입할 때 서버가 다시 판정한다.
+ */
+export async function checkNickname(name) {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/nickname?name=${encodeURIComponent(name)}`);
+    if (!res.ok) return { available: null };
+    return await res.json();
+  } catch {
+    return { available: null };
+  }
 }
 
 /** ack 응답을 기다린다. 시간이 지나면 { ok: false, error: 'TIMEOUT' } */

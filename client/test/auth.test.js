@@ -1,0 +1,77 @@
+// 개발 모드 계정: 가입·로그인·로그인 유지·로그아웃 (Firebase 모드와 같은 인터페이스)
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { authErrorMessage, createDevAuth } from '../src/auth.js';
+
+/** localStorage 흉내 */
+function memoryStorage() {
+  const data = new Map();
+  return {
+    getItem: (key) => (data.has(key) ? data.get(key) : null),
+    setItem: (key, value) => data.set(key, String(value)),
+    removeItem: (key) => data.delete(key),
+    dump: () => [...data.values()].join('\n'),
+  };
+}
+
+const firstChange = (auth) => new Promise((resolve) => {
+  const stop = auth.onChange((session) => {
+    stop();
+    resolve(session);
+  });
+});
+
+const TEST_PASSWORD = 'correct-horse-7';
+
+test('가입하면 바로 로그인되고, 페이지를 다시 열어도 로그인이 유지된다', async () => {
+  const storage = memoryStorage();
+  const auth = createDevAuth(storage);
+  assert.equal(await firstChange(auth), null, '처음에는 로그아웃 상태');
+
+  const session = await auth.signUp('  Knight@Example.com ', TEST_PASSWORD);
+  assert.equal(session.email, 'knight@example.com', '이메일은 소문자로 정리한다');
+  assert.match(session.uid, /^dev:[0-9a-f]{32}$/, '개발 서버가 받는 토큰 형식');
+  assert.equal(await session.getToken(), session.uid);
+  assert.equal(storage.dump().includes(TEST_PASSWORD), false, '비밀번호 원문은 저장하지 않는다');
+
+  // "나갔다 다시 들어오기": 같은 저장소로 새로 만든다
+  const reopened = createDevAuth(storage);
+  const restored = await firstChange(reopened);
+  assert.equal(restored?.uid, session.uid);
+});
+
+test('같은 이메일로 두 번 가입할 수 없고, 비밀번호가 틀리면 로그인되지 않는다', async () => {
+  const storage = memoryStorage();
+  const auth = createDevAuth(storage);
+  const { uid } = await auth.signUp('paladin@example.com', TEST_PASSWORD);
+  await auth.signOut();
+
+  await assert.rejects(auth.signUp('PALADIN@example.com', TEST_PASSWORD), { code: 'auth/email-already-in-use' });
+  await assert.rejects(auth.signIn('paladin@example.com', 'wrong-password-1'), { code: 'auth/invalid-credential' });
+  await assert.rejects(auth.signIn('nobody@example.com', TEST_PASSWORD), { code: 'auth/invalid-credential' });
+
+  const again = await auth.signIn('Paladin@Example.com', TEST_PASSWORD);
+  assert.equal(again.uid, uid, '같은 계정으로 돌아온다');
+});
+
+test('로그아웃하면 알림이 가고, 다시 열어도 로그아웃 상태다', async () => {
+  const storage = memoryStorage();
+  const auth = createDevAuth(storage);
+  await auth.signUp('mage@example.com', TEST_PASSWORD);
+
+  const changes = [];
+  auth.onChange((session) => changes.push(session?.email ?? null));
+  await new Promise((r) => queueMicrotask(r));
+  await auth.signOut();
+  assert.deepEqual(changes, ['mage@example.com', null]);
+  assert.equal(await firstChange(createDevAuth(storage)), null);
+});
+
+test('입력 오류는 서버에 가기 전에 걸러 사람이 읽을 문장으로 알려 준다', async () => {
+  const auth = createDevAuth(memoryStorage());
+  await assert.rejects(auth.signUp('not-an-email', TEST_PASSWORD), { code: 'auth/invalid-email' });
+  await assert.rejects(auth.signUp('short@example.com', '1234567'), { code: 'auth/weak-password' });
+  assert.equal(authErrorMessage({ code: 'auth/weak-password' }), '비밀번호는 8자 이상이어야 합니다.');
+  assert.equal(authErrorMessage({ code: 'auth/invalid-credential' }), '이메일 또는 비밀번호가 맞지 않습니다.');
+  assert.match(authErrorMessage({ code: 'auth/operation-not-allowed' }), /이메일\/비밀번호/);
+});

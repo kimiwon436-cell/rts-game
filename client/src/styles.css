@@ -583,3 +583,44 @@ button, .rp-seek { touch-action: manipulation; }
   .replay-info { top: 64px; bottom: auto; right: 8px; min-width: 0; }
   .screen { padding: 20px 14px; }
 }
+
+/* ---------- 로그인·회원가입 ---------- */
+.auth-card { width: min(420px, 100%); gap: 20px; }
+.auth-panel { display: grid; gap: 14px; padding: 20px; text-align: left; }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--line); margin: -4px 0 2px; }
+.auth-tab {
+  padding: 10px 0;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-soft);
+  font-weight: 600;
+  cursor: pointer;
+}
+.auth-tab.is-active { color: var(--text); border-bottom-color: var(--gold); }
+.auth-form { display: grid; gap: 12px; }
+.field { display: grid; gap: 4px; }
+.field-hint:empty { display: none; }
+.field-hint { margin: 0; min-height: 1.2em; font-size: 12px; color: var(--text-faint); }
+.field-hint.is-good { color: var(--vert); }
+.field-hint.is-bad { color: #f08a80; }
+.input-group { display: flex; }
+.input-group .input { flex: 1; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.input-addon {
+  padding: 0 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-left: 0;
+  border-radius: 0 4px 4px 0;
+  font-size: 13px;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.btn-block { width: 100%; padding-top: 11px; padding-bottom: 11px; }
+.link-btn { justify-self: center; padding: 2px 4px; background: none; border: 0; font-size: 13px; color: var(--text-soft); text-decoration: underline; cursor: pointer; }
+.link-btn:hover { color: var(--text); }
+.form-notice { margin: 0; font-size: 13.5px; color: var(--vert); }
+.form-notice:empty, .auth-panel .form-error:empty { display: none; }
+.screen-title { margin: 0; font-family: var(--f-display); font-weight: 700; font-size: 24px; }
+.status-card { gap: 14px; }
+.status-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }

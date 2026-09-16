@@ -414,38 +414,32 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 
 ## 8. Firebase
 
-### 인증 흐름
+### 인증 흐름 (`client/src/auth.js`, `server/src/net/auth.js`, `server/src/persistence/profiles.js`)
 
-1. 클라이언트가 `signInAnonymously()`로 로그인한다 (나중에 Google 계정을 연결).
-2. ID 토큰을 Socket.IO 핸드셰이크에 담아 연결한다.
-3. 서버는 `io.use()` 미들웨어에서 Admin SDK로 토큰을 검증하고 `socket.data.uid`에 저장한다. 실패하면 연결을 거부한다.
+1. **가입·로그인**: 이메일 + 비밀번호 (Firebase Auth). `browserLocalPersistence`라 브라우저를 닫았다 열어도 로그인이 유지되고,
+   페이지를 열면 `onAuthStateChanged`가 저장된 로그인을 돌려줘 로그인 화면 없이 바로 접속한다. 비밀번호 재설정 메일도 Firebase가 보낸다.
+2. ID 토큰을 Socket.IO 핸드셰이크에 담아 연결한다 (`auth`를 함수로 넘겨 재연결마다 새 토큰). **닉네임은 보내지 않는다.**
+3. 서버 미들웨어가 Admin SDK로 토큰을 검증하고, 저장소에서 **프로필**(닉네임·레이팅·전적)을 읽어 `socket.data.profile`에 둔다.
+4. 접속하자마자 서버가 `session:profile`을 보낸다.
+   - 프로필이 있으면 로비 이벤트가 열린다.
+   - `null`이면(가입 직후) 로비 이벤트는 답하지 않고, 클라이언트가 `profile:create { nickname }`으로 닉네임을 정해야 열린다.
+     가입 폼에서 고른 닉네임을 접속하자마자 자동으로 보내고, 그사이 누가 가져갔으면 닉네임 화면에서 다시 고른다.
+5. **닉네임은 서버만 정한다.** 한글·영문·숫자·밑줄 2~12자(`shared/src/rules/nickname.js`), 운영진 사칭 단어 금지,
+   대소문자·전각을 무시한 키로 중복을 막는다. Firestore 트랜잭션으로 `nicknames/{key}`와 `users/{uid}`를 함께 쓴다.
+   가입 화면은 `GET /api/nickname?name=`으로 미리 확인만 한다 (실제 예약은 트랜잭션).
 
-```js
-// client/src/net/socket.js
-const socket = io(import.meta.env.VITE_SERVER_URL, {
-  auth: (cb) => { auth.currentUser.getIdToken().then((token) => cb({ token })); },
-});
-
-// server/src/net/auth.js
-io.use(async (socket, next) => {
-  try {
-    const { uid } = await getAuth().verifyIdToken(socket.handshake.auth.token);
-    socket.data.uid = uid;
-    next();
-  } catch {
-    next(new Error('UNAUTHORIZED'));
-  }
-});
-```
-
-`auth`를 함수로 넘기면 재연결할 때마다 새 토큰을 받는다.
+개발 모드(Firebase 없음)도 흐름은 같다. 계정은 브라우저 `localStorage`에 소금 친 SHA-256으로 저장하고(보안 수단 아님),
+토큰은 `dev:<32자리 hex>`, 프로필은 서버 메모리(`MemoryProfileStore`, 서버를 끄면 사라짐)에 둔다.
 
 ### Firestore 데이터 모델
 
 | 경로 | 필드 | 쓰기 권한 |
 |---|---|---|
-| `users/{uid}` | nickname, createdAt, matches, wins, losses, lastPlayedAt | nickname만 본인, 전적은 서버 |
+| `users/{uid}` | nickname, nicknameKey, ratings{1v1,2v2,3v3}, ranked{wins,losses}, matches, wins, losses, createdAt, lastPlayedAt | 서버만 |
+| `nicknames/{key}` | uid, nickname, createdAt — 닉네임 예약 (key = NFKC 소문자) | 서버만 |
 | `matches/{matchId}` | matchId, mapId, players[{slot, uid, nickname, defeated}], uids[], winnerSlot, reason, durationSec, startedAt, endedAt | 서버만 |
+
+모든 쓰기는 게임 서버(Admin SDK)만 한다. 규칙은 로그인한 사람에게 읽기만 허용한다. 이메일은 Firestore에 저장하지 않는다.
 
 쓰기는 경기가 끝날 때 배치 한 번(`server/src/persistence/matches.js`), 경기당 1 + 인원 수. 틱마다 쓰지 않는다.
 `matchId`는 `방id-시작시각`이라 같은 경기를 두 번 써도 덮어쓰기라 안전하다. `uids` 배열은 "내 경기만 보기"(array-contains) 색인용이다.

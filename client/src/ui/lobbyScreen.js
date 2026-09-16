@@ -8,7 +8,7 @@ const STATUS_LABEL = {
   [ROOM_STATUS.PLAYING]: '진행 중',
 };
 
-export function createLobbyScreen({ me, onCreate, onJoin, onOpenReplay }) {
+export function createLobbyScreen({ me, onCreate, onJoin, onOpenReplay, onSignOut }) {
   const conn = h('span', { class: 'conn' }, '연결됨');
   const ping = h('span', { class: 'mono' }, '— ms');
   const list = h('ul', { class: 'room-list' });
@@ -59,7 +59,14 @@ export function createLobbyScreen({ me, onCreate, onJoin, onOpenReplay }) {
         'header',
         { class: 'topbar' },
         h('p', { class: 'brand' }, 'Rune ', h('span', { class: 'amp' }, '&'), ' Crown'),
-        h('div', { class: 'who' }, h('strong', {}, me.nickname), conn, ping),
+        h(
+          'div',
+          { class: 'who' },
+          h('strong', {}, me.nickname),
+          conn,
+          ping,
+          h('button', { class: 'btn btn-sm', type: 'button', onClick: () => onSignOut?.() }, '로그아웃'),
+        ),
       ),
       h(
         'div',

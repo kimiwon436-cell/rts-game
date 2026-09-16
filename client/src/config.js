@@ -1,4 +1,5 @@
-const env = import.meta.env;
+// Vite가 채워 준다. 테스트(Node)에서 불러와도 깨지지 않게 빈 객체로 둔다
+const env = import.meta.env ?? {};
 
 export const SERVER_URL = env.VITE_SERVER_URL || 'http://localhost:3000';
 

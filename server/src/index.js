@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { initFirebaseAdmin } from './firebase.js';
 import { createGameServer } from './app.js';
+import { createProfileStore } from './persistence/profiles.js';
 
 if (config.authMode === 'firebase') {
   const { projectId } = initFirebaseAdmin(config.firebaseServiceAccount);
@@ -11,6 +12,7 @@ if (config.authMode === 'firebase') {
 
 const { httpServer, close } = createGameServer({
   authMode: config.authMode,
+  profiles: createProfileStore(), // Firebase면 Firestore, 아니면 메모리 (서버를 끄면 사라진다)
   clientOrigins: config.clientOrigins,
   reconnectGraceSec: config.reconnectGraceSec,
 });

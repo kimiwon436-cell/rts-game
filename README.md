@@ -24,9 +24,10 @@ npm run dev
 ```
 
 - 서버는 `http://localhost:3000`, 클라이언트는 `http://localhost:5173`에서 뜹니다.
-- `.env` 파일이 없으면 서버와 클라이언트 모두 **개발 모드**로 동작합니다. Firebase 없이 게스트로 접속합니다.
-- 1v1을 혼자 시험하려면 `http://localhost:5173`을 탭 두 개로 여세요. 탭마다 다른 플레이어가 됩니다.
-  한 탭에서 방을 만들고, 다른 탭에서 입장한 뒤 둘 다 **준비**를 누르면 게임이 시작됩니다.
+- `.env` 파일이 없으면 서버와 클라이언트 모두 **개발 모드**로 동작합니다. Firebase 없이, 이 브라우저에만 저장되는 연습용 계정으로 가입·로그인합니다.
+- 로그인은 브라우저를 닫았다 열어도 유지됩니다. 그래서 같은 브라우저의 탭 두 개는 **같은 계정**이 됩니다(나중 탭이 앞 탭을 끊습니다).
+  혼자 1v1을 시험하려면 두 번째 플레이어는 **시크릿 창**이나 다른 브라우저에서 다른 계정으로 가입하세요.
+- 개발 모드 서버는 닉네임을 메모리에만 두므로 서버를 다시 켜면 닉네임을 다시 정하게 됩니다.
 
 조작:
 
@@ -64,14 +65,15 @@ npm test
 ## Firebase 연결하기
 
 1. [Firebase 콘솔](https://console.firebase.google.com)에서 프로젝트를 만듭니다.
-2. **Authentication → 로그인 방법**에서 **익명**을 사용 설정합니다.
+2. **Authentication → 로그인 방법**에서 **이메일/비밀번호**를 사용 설정합니다. (예전 익명 로그인은 쓰지 않습니다)
+   - 비밀번호 재설정 메일 문구는 **Authentication → 템플릿**에서 바꿀 수 있습니다.
 3. **Firestore Database**를 만듭니다. 위치는 `asia-northeast3 (서울)`을 고르세요 (나중에 바꿀 수 없습니다).
 4. **프로젝트 설정 → 내 앱**에서 웹 앱을 추가하고, 설정 값을 `client/.env`에 넣습니다. 형식은 `client/.env.example`을 보세요.
 5. **프로젝트 설정 → 서비스 계정 → 새 비공개 키 생성**으로 JSON 파일을 받고, Base64로 인코딩해 `server/.env`의 `FIREBASE_SERVICE_ACCOUNT`에 넣습니다.
    - Windows PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("service-account.json"))`
    - macOS·Linux: `base64 -i service-account.json | tr -d '\n'`
    - JSON 파일은 저장소 밖에 보관하세요.
-6. Firestore 보안 규칙을 배포합니다.
+6. Firestore 보안 규칙을 배포합니다. **이번 버전부터 프로필·닉네임은 서버만 쓰도록 규칙이 바뀌었으니 꼭 다시 배포하세요.**
    ```bash
    npx firebase-tools login
    npx firebase-tools use --add
