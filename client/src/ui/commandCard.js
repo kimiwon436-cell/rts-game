@@ -3,7 +3,8 @@ import { BUILDINGS, BUILD_MENU } from '@rune/shared/data/buildings.js';
 import { AGES, MAX_AGE, RESOURCES, RESOURCE_NAMES } from '@rune/shared/data/economy.js';
 import { MARKET, buyCost, sellGain } from '@rune/shared/data/market.js';
 import { UNITS, WORKER } from '@rune/shared/data/units.js';
-import { ABILITIES, GARRISON } from '@rune/shared/data/abilities.js';
+import { ABILITIES } from '@rune/shared/data/abilities.js';
+import { garrisonOf } from '@rune/shared/rules/garrison.js';
 import { OATHS } from '@rune/shared/data/oaths.js';
 import { TICK_MS } from '@rune/shared/constants.js';
 import { UNIT_STATE } from '@rune/shared/protocol.js';
@@ -222,6 +223,7 @@ function describeUnits(world, units, players, touch) {
         disabled: locked,
         short: !locked && missingResource(me, b.cost) !== null,
         need: locked ? `${AGES[b.age].name} 필요` : null,
+        note: b.coastal ? '바다와 이어진 물가에만' : null,
         action: { kind: 'build', type },
       };
     });
@@ -229,8 +231,8 @@ function describeUnits(world, units, players, touch) {
       ? '건물을 고른 뒤 지을 곳을 누른 채 끌어 맞추고 떼기'
       : '건물을 고른 뒤 땅을 클릭 · Shift로 연달아 짓기 · Esc 취소';
   }
-  // 농노가 섞여 있으면 A는 룬 오벨리스크 단축키라서 공격 이동은 병력만 골랐을 때 보여준다
-  if (!units.some((u) => UNITS[u.type].worker)) {
+  // 농노가 섞여 있으면 A는 룬 오벨리스크 단축키라서 공격 이동은 병력만 골랐을 때 보여준다 (수송선만 골랐으면 없다)
+  if (!units.some((u) => UNITS[u.type].worker) && units.some((u) => UNITS[u.type].attack)) {
     model.buttons.push({ key: 'A', label: '공격 이동', note: '가며 만난 적과 싸움', action: { kind: 'attackMove' } });
     if (units.length > 1) {
       model.hint = touch ? '누른 곳으로: 적은 공격, 땅은 이동 · 공격 이동 뒤 누르기' : '우클릭: 적은 공격, 땅은 이동 · A 뒤 클릭: 공격 이동';
@@ -278,8 +280,11 @@ function abilityButtons(world, unit, def) {
 
 function unitStats(def) {
   const { attack } = def;
-  const base = `공격 ${attack.damage} ${ATTACK_TYPE_NAMES[attack.type]} · 사거리 ${attack.range} · ${ARMOR_NAMES[def.armor]}`;
-  return def.title ? `${def.title} · ${base}` : base;
+  const base = attack
+    ? `공격 ${attack.damage} ${ATTACK_TYPE_NAMES[attack.type]} · 사거리 ${attack.range} · ${ARMOR_NAMES[def.armor]}`
+    : `싸우지 않음 · ${def.garrison ? `${def.garrison.capacity}기 수송 · ` : ''}${ARMOR_NAMES[def.armor]}`;
+  const naval = def.naval ? ' · 물 위로만 다님' : '';
+  return def.title ? `${def.title} · ${base}${naval}` : `${base}${naval}`;
 }
 
 function unitStatus(unit) {
@@ -289,7 +294,8 @@ function unitStatus(unit) {
   if (unit.rooted) extras.push('뿌리내림');
   if (unit.stunned) extras.push('기절');
   if (unit.slowed) extras.push('둔화');
-  if (UNITS[unit.type].garrison) extras.push(`탑승 ${unit.extra}/${GARRISON.capacity}`);
+  const garrison = garrisonOf(unit.type);
+  if (garrison) extras.push(`탑승 ${unit.extra}/${garrison.capacity}`);
   if (unit.carryKind && unit.carryAmount > 0) {
     extras.push(`${RESOURCE_NAMES[unit.carryKind]} ${unit.carryAmount}/${WORKER.carryCapacity}`);
   }

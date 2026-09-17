@@ -2,7 +2,8 @@ import { PLAYER_COLORS, TILE_SIZE } from '@rune/shared/constants.js';
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { AGES, RESOURCES, RESOURCE_NAMES, TRIBUTE, tributeReceived } from '@rune/shared/data/economy.js';
 import { UNITS } from '@rune/shared/data/units.js';
-import { ABILITIES, GARRISON } from '@rune/shared/data/abilities.js';
+import { ABILITIES } from '@rune/shared/data/abilities.js';
+import { canBoard, garrisonOf } from '@rune/shared/rules/garrison.js';
 import { OATHS, OATH_IDS } from '@rune/shared/data/oaths.js';
 import { loadMap } from '@rune/shared/map/maps/index.js';
 import { TERRAIN, TERRAIN_NAMES, footprintCenter } from '@rune/shared/map/grid.js';
@@ -288,10 +289,10 @@ export function createGameView({
     const units = selectedOwnUnits();
     if (!units.length) return;
 
-    // 내 아르카논을 우클릭하면 등에 탄다
+    // 내 아르카논·수송선을 우클릭하면 탄다 (수송선은 물가에 대 있어야 탈 수 있다)
     const friend = world.unitAt(t.x, t.y);
-    if (friend && world.isMine(friend) && UNITS[friend.type].garrison && units.some((u) => u.id !== friend.id)) {
-      const riders = units.filter((u) => GARRISON.allow.includes(u.type)).map((u) => u.id);
+    if (friend && world.isMine(friend) && garrisonOf(friend.type) && units.some((u) => u.id !== friend.id)) {
+      const riders = units.filter((u) => canBoard(friend.type, u.type)).map((u) => u.id);
       if (riders.length) {
         send({ type: CMD.BOARD, unitIds: riders, targetId: friend.id });
         renderer.addMarker(t.x, t.y, 'work');
@@ -595,8 +596,8 @@ export function createGameView({
     const building = unit ? null : world.buildingAt(Math.floor(t.x), Math.floor(t.y));
 
     if (unit && world.isMine(unit)) {
-      // 내 아르카논을 누르면 고른 병력이 등에 탄다
-      const boarding = UNITS[unit.type].garrison && own.some((u) => u.id !== unit.id && GARRISON.allow.includes(u.type));
+      // 내 아르카논·수송선을 누르면 고른 병력이 탄다
+      const boarding = garrisonOf(unit.type) && own.some((u) => u.id !== unit.id && canBoard(unit.type, u.type));
       if (boarding) commandAt(t);
       else selectAt(t, false);
       return;

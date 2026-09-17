@@ -41,11 +41,27 @@ export class FogLayer {
     this.ctx.putImageData(this.image, 0, 0);
   }
 
-  /** (x, y)에서 w×h 크기로 늘려 그린다 */
-  draw(ctx, x, y, w, h, smooth = true) {
+  /**
+   * (x, y)에서 w×h 크기로 늘려 그린다.
+   * extend를 주면 가장자리 줄을 바깥으로 그만큼 늘여 그린다 — 맵 밖 바다가 맵 가장자리와 같은 어둡기로 이어진다.
+   */
+  draw(ctx, x, y, w, h, smooth = true, extend = 0) {
     const previous = ctx.imageSmoothingEnabled;
     ctx.imageSmoothingEnabled = smooth;
-    ctx.drawImage(this.canvas, x, y, w, h);
+    const { canvas } = this;
+    ctx.drawImage(canvas, x, y, w, h);
+    if (extend > 0) {
+      const cw = canvas.width;
+      const ch = canvas.height;
+      ctx.drawImage(canvas, 0, 0, 1, ch, x - extend, y, extend, h); // 왼쪽
+      ctx.drawImage(canvas, cw - 1, 0, 1, ch, x + w, y, extend, h); // 오른쪽
+      ctx.drawImage(canvas, 0, 0, cw, 1, x, y - extend, w, extend); // 위
+      ctx.drawImage(canvas, 0, ch - 1, cw, 1, x, y + h, w, extend); // 아래
+      ctx.drawImage(canvas, 0, 0, 1, 1, x - extend, y - extend, extend, extend);
+      ctx.drawImage(canvas, cw - 1, 0, 1, 1, x + w, y - extend, extend, extend);
+      ctx.drawImage(canvas, 0, ch - 1, 1, 1, x - extend, y + h, extend, extend);
+      ctx.drawImage(canvas, cw - 1, ch - 1, 1, 1, x + w, y + h, extend, extend);
+    }
     ctx.imageSmoothingEnabled = previous;
   }
 }
