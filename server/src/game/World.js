@@ -4,6 +4,7 @@ import { ABILITIES } from '@rune/shared/data/abilities.js';
 import { POP_LIMIT, STARTING_RESOURCES, STARTING_WORKERS, WOOD_PER_TREE } from '@rune/shared/data/economy.js';
 import { MARKET } from '@rune/shared/data/market.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
+import { VisionGrid } from '@rune/shared/rules/vision.js';
 import { GAME_EVENT, UNIT_STATE } from '@rune/shared/protocol.js';
 import { NavGrid } from './pathfinding/NavGrid.js';
 import { Pathfinder, toWaypoints } from './pathfinding/astar.js';
@@ -45,6 +46,10 @@ export class World {
     this.events = [];
     /** 경로 계산을 기다리는 유닛 id (processPathQueue가 틱마다 예산만큼 처리) */
     this.pathQueue = [];
+    /** 틱마다 다시 채우는 유닛 공간 색인 (separation.js·combat.js가 처음 쓸 때 만든다) */
+    this.bodyGrid = null;
+    this.combatGrid = null;
+    this.scratchUnits = []; // 색인을 만들 때 쓰는 재사용 배열
     /** 경기 결과. 정해지면 { winner, reason, tick } */
     this.result = null;
 
@@ -69,6 +74,11 @@ export class World {
     this.wellOwner = new Map(); // wellId → 오벨리스크 buildingId
 
     this.players = [];
+    const teams = Math.max(2, ...players.map((p) => (p.team ?? p.slot) + 1));
+    /** 전장의 안개: 팀별 시야 (systems/vision.js가 틱마다 갱신한다) */
+    this.vision = new VisionGrid(this.width, this.height, { teams });
+    /** 팀마다 한 번이라도 본 적 건물 id (안개 속에서도 공격 명령을 받는다) */
+    this.knownBuildings = Array.from({ length: teams }, () => new Set());
     for (const p of players) {
       this.players[p.slot] = {
         uid: p.uid,
@@ -157,6 +167,7 @@ export class World {
       channeling: false,
       buffed: false,
       extra: 0,
+      revealUntil: null, // 공격해서 맞은 팀에게 드러나 있는 틱 [팀별]
     };
     this.units.set(unit.id, unit);
     return unit;
@@ -182,6 +193,7 @@ export class World {
       rally: null, // 집결지 { x, y, mineId, tile }
       cooldown: 0, // 감시탑 공격 간격
       combatTargetId: null,
+      revealUntil: null,
     };
     this.buildings.set(building.id, building);
     this.setFootprint(building, 1, complete);
@@ -197,6 +209,7 @@ export class World {
 
   removeBuilding(building) {
     this.buildings.delete(building.id);
+    for (const known of this.knownBuildings) known.delete(building.id);
     this.setFootprint(building, 0, building.started);
     if (building.wellId) this.wellOwner.delete(building.wellId);
   }
@@ -418,6 +431,17 @@ export class World {
   /** 서로 다른 팀이면 적이다. 같은 팀(나 자신 포함)은 공격하지 않고 오라 같은 이로운 효과를 나눈다 */
   areEnemies(slotA, slotB) {
     return this.teamOf(slotA) !== this.teamOf(slotB);
+  }
+
+  /** 그 팀이 지금 볼 수 있는가 (우리 팀 것은 늘 보인다) */
+  isVisibleTo(team, entity) {
+    if (this.teamOf(entity.owner) === team) return true;
+    return entity.w !== undefined ? this.vision.isRectVisible(team, entity) : this.vision.isVisible(team, entity.x, entity.y);
+  }
+
+  /** 그 팀이 공격 대상으로 고를 수 있는가: 지금 보이는 것, 또는 한 번 본 건물 (건물은 움직이지 않는다) */
+  canTarget(team, entity) {
+    return this.isVisibleTo(team, entity) || (entity.w !== undefined && this.knownBuildings[team].has(entity.id));
   }
 
   /** id로 유닛이나 건물을 찾는다 (둘은 같은 id 공간을 쓴다) */

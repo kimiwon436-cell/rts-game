@@ -86,7 +86,7 @@ test('공격 명령을 받은 장궁병은 사거리 6까지만 다가가서 쏜
   const world = newWorld();
   const row = openRow(world, 14);
   const bow = spawnInRow(world, row, 'longbowman', 0, 0);
-  const peasant = spawnInRow(world, row, 'peasant', 1, 11);
+  const peasant = spawnInRow(world, row, 'peasant', 1, 8); // 장궁병 시야(8) 끝자락: 보이지만 사거리 밖
 
   assert.equal(command(world, 0, { type: CMD.ATTACK, unitIds: [bow.id], targetId: peasant.id }), null);
   runUntilAttack(world, bow.id);

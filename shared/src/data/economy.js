@@ -29,5 +29,14 @@ export const AGES = Object.freeze({
 });
 export const MAX_AGE = 3;
 
+/**
+ * 팀원에게 자원 보내기 (팀전). 운송 수수료를 떼고 도착한다.
+ * 수수료는 한 사람에게 팀의 자원을 몰아주는 전략을 막지는 않되 공짜로 만들지 않는다.
+ */
+export const TRIBUTE = Object.freeze({ fee: 0.1, amounts: Object.freeze([100, 500]), max: 10000 });
+
+/** amount를 보내면 받는 쪽에 도착하는 양 */
+export const tributeReceived = (amount) => Math.floor(amount * (1 - TRIBUTE.fee));
+
 /** 여러 농노가 함께 지을 때의 속도 배율: 1명 1배, 2명 1.33배, 3명 1.67배 */
 export const buildSpeedMultiplier = (builders) => (builders <= 0 ? 0 : (builders + 2) / 3);

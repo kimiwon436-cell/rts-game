@@ -10,6 +10,8 @@ import { saveMatchResult } from '../persistence/matches.js';
 import { MemoryProfileStore, ProfileError } from '../persistence/profiles.js';
 
 const LOBBY_CHANNEL = 'lobby';
+/** 방 목록은 이 시간 안의 변화를 모아 한 번에 보낸다 (로비에 사람이 많을 때 방 하나가 바뀔 때마다 모두에게 보내지 않게) */
+const LIST_BROADCAST_MS = 250;
 const channelOf = (roomId) => `room:${roomId}`;
 
 const ok = (data = {}) => ({ ok: true, ...data });
@@ -43,6 +45,7 @@ export class Lobby extends EventEmitter {
     this.rooms = new Map(); // roomId → room
     this.roomOfUid = new Map(); // uid → roomId
     this.socketOfUid = new Map(); // uid → socket
+    this.listTimer = null;
   }
 
   /** ack 응답이 있는 이벤트를 연결한다. 처리 함수는 값이나 Promise를 돌려준다. */
@@ -512,6 +515,8 @@ export class Lobby extends EventEmitter {
 
   /** 서버를 닫을 때 진행 중인 카운트다운, 재접속 유예, 경기를 모두 멈춘다 */
   dispose() {
+    clearTimeout(this.listTimer);
+    this.listTimer = null;
     for (const room of this.rooms.values()) {
       clearTimeout(room.countdownTimer);
       for (const player of room.players) clearTimeout(player.graceTimer);
@@ -565,7 +570,12 @@ export class Lobby extends EventEmitter {
   }
 
   broadcastList() {
-    this.io.to(LOBBY_CHANNEL).emit(EV.LOBBY_UPDATE, this.summaries());
+    if (this.listTimer) return; // 곧 나갈 목록에 이번 변화도 담긴다
+    this.listTimer = setTimeout(() => {
+      this.listTimer = null;
+      this.io.to(LOBBY_CHANNEL).emit(EV.LOBBY_UPDATE, this.summaries());
+    }, LIST_BROADCAST_MS);
+    this.listTimer.unref?.();
   }
 }
 

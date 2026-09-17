@@ -1,4 +1,5 @@
 import { UNITS } from '@rune/shared/data/units.js';
+import { UnitGrid } from '../spatial.js';
 
 const CELL_SIZE = 2; // 공간 해시 한 칸 (타일). 유닛 지름보다 커야 한다
 const RESOLVE = 0.6; // 한 틱에 겹친 거리의 60%만 풀어 부드럽게 밀어낸다
@@ -22,32 +23,37 @@ const ignoresCollision = (unit) =>
   unit.order?.type === 'construct' ||
   unit.order?.type === 'returnCargo';
 
-const cellKey = (cx, cy) => cy * 4096 + cx;
-
-/** 겹친 유닛을 서로 밀어낸다. 움직이는 유닛이 서 있는 유닛을 비켜 가게 한다. */
+/**
+ * 겹친 유닛을 서로 밀어낸다. 움직이는 유닛이 서 있는 유닛을 비켜 가게 한다.
+ * 몸은 틱 시작 위치로 칸에 담고, 이웃 칸은 밀려난 지금 위치로 찾는다.
+ */
 export function separateUnits(world) {
-  const cells = new Map();
-  const bodies = [];
-  for (const unit of world.units.values()) {
-    if (ignoresCollision(unit)) continue;
-    bodies.push(unit);
-    const key = cellKey(Math.floor(unit.x / CELL_SIZE), Math.floor(unit.y / CELL_SIZE));
-    let cell = cells.get(key);
-    if (!cell) {
-      cell = [];
-      cells.set(key, cell);
-    }
-    cell.push(unit);
-  }
+  const bodies = world.scratchUnits;
+  bodies.length = 0;
+  for (const unit of world.units.values()) if (!ignoresCollision(unit)) bodies.push(unit);
+  world.bodyGrid ??= new UnitGrid(world.width, world.height, CELL_SIZE);
+  const { cols, rows, starts, items } = world.bodyGrid.build(bodies);
 
-  for (const a of bodies) {
+  for (let n = 0; n < bodies.length; n++) {
+    const a = bodies[n];
+    const radius = UNITS[a.type].radius;
     const cx = Math.floor(a.x / CELL_SIZE);
     const cy = Math.floor(a.y / CELL_SIZE);
-    for (let oy = -1; oy <= 1; oy++) {
-      for (let ox = -1; ox <= 1; ox++) {
-        const cell = cells.get(cellKey(cx + ox, cy + oy));
-        if (!cell) continue;
-        for (const b of cell) if (b.id > a.id) resolvePair(world, a, b);
+    for (let row = cy - 1; row <= cy + 1; row++) {
+      if (row < 0 || row >= rows) continue;
+      for (let col = cx - 1; col <= cx + 1; col++) {
+        if (col < 0 || col >= cols) continue;
+        const cell = row * cols + col;
+        for (let i = starts[cell]; i < starts[cell + 1]; i++) {
+          const b = items[i];
+          if (b.id <= a.id) continue;
+          // 한 축으로만 봐도 몸이 닿지 않는 거리면 건너뛴다 (그러면 실제 거리도 닿지 않는다 — 결과는 같고 계산만 준다)
+          const reach = radius + UNITS[b.type].radius;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          if (dx >= reach || -dx >= reach || dy >= reach || -dy >= reach) continue;
+          resolvePair(world, a, b);
+        }
       }
     }
   }

@@ -1,5 +1,5 @@
 // 유닛 능력치 — docs/GAME_DESIGN.md 3·4장 (기본 7종 + 맹세의 궁극 유닛 3종)
-// 사거리·이동 속도·반지름은 타일 단위, 생산 시간·공격 간격은 초 단위
+// 사거리·이동 속도·반지름·시야는 타일 단위, 생산 시간·공격 간격은 초 단위
 
 export const UNITS = Object.freeze({
   peasant: {
@@ -14,6 +14,7 @@ export const UNITS = Object.freeze({
     armor: 'light',
     speed: 2.5,
     radius: 0.3,
+    sight: 6,
     attack: { damage: 5, type: 'normal', range: 1, cooldown: 1.5 },
     worker: true,
   },
@@ -29,6 +30,7 @@ export const UNITS = Object.freeze({
     armor: 'light',
     speed: 2.4,
     radius: 0.32,
+    sight: 7,
     attack: { damage: 9, type: 'normal', range: 1, cooldown: 1.2 },
     bonusVsTag: { cavalry: 3 },
   },
@@ -44,6 +46,7 @@ export const UNITS = Object.freeze({
     armor: 'light',
     speed: 2.4,
     radius: 0.3,
+    sight: 8,
     attack: { damage: 12, type: 'pierce', range: 6, cooldown: 1.6 },
   },
   scout_rider: {
@@ -58,6 +61,7 @@ export const UNITS = Object.freeze({
     armor: 'light',
     speed: 4.2,
     radius: 0.38,
+    sight: 10,
     attack: { damage: 8, type: 'normal', range: 1, cooldown: 1.2 },
     tags: ['cavalry'],
     bonusVsBuilding: { obelisk: 3, farmstead: 3 },
@@ -74,6 +78,7 @@ export const UNITS = Object.freeze({
     armor: 'heavy',
     speed: 3.6,
     radius: 0.4,
+    sight: 7,
     attack: { damage: 18, type: 'normal', range: 1, cooldown: 1.4 },
     tags: ['cavalry'],
   },
@@ -89,6 +94,7 @@ export const UNITS = Object.freeze({
     armor: 'heavy',
     speed: 2.1,
     radius: 0.36,
+    sight: 7,
     attack: { damage: 14, type: 'normal', range: 1, cooldown: 1.3 },
     ability: 'shieldWall',
   },
@@ -104,6 +110,7 @@ export const UNITS = Object.freeze({
     armor: 'light',
     speed: 2.2,
     radius: 0.3,
+    sight: 8,
     attack: { damage: 20, type: 'magic', range: 5, cooldown: 2.0, splash: 1.2 },
   },
 
@@ -125,6 +132,7 @@ export const UNITS = Object.freeze({
     armor: 'heavy',
     speed: 3.0,
     radius: 0.55,
+    sight: 9,
     attack: { damage: 60, type: 'normal', range: 1, cooldown: 1.2 },
     tags: ['cavalry'],
     bonusVsArmor: { colossal: 3 }, // 거인 사냥꾼
@@ -147,6 +155,7 @@ export const UNITS = Object.freeze({
     armor: 'light',
     speed: 2.2,
     radius: 0.42,
+    sight: 10,
     attack: { damage: 40, type: 'magic', range: 7, cooldown: 1.8, chain: { targets: 3, falloff: 0.25 } },
     abilities: ['starfall', 'timeWard'],
     manaResonance: { perObelisk: 0.1, max: 0.4 }, // 마나 샘 1곳당 재사용 대기시간 -10%
@@ -166,6 +175,7 @@ export const UNITS = Object.freeze({
     armor: 'colossal',
     speed: 1.4,
     radius: 0.7,
+    sight: 10,
     attack: { damage: 70, type: 'normal', range: 1.5, cooldown: 2.2, splash: 2 },
     abilities: ['root', 'unload'],
     garrison: true, // 등 위의 성채

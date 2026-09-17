@@ -6,7 +6,8 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "node --env-file-if-exists=.env --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "bench": "node bench/simulation.bench.mjs"
   },
   "dependencies": {
     "@rune/shared": "0.1.0",

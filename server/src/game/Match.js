@@ -33,7 +33,7 @@ export class Match {
     this.ended = false;
     this.startedAt = Date.now();
     this.world = new World(loadMap(mapId), players);
-    this.feed = new SnapshotFeed();
+    this.feed = new SnapshotFeed(this.world);
     this.slotOfUid = new Map(players.map((p) => [p.uid, p.slot]));
     this.uidOfSlot = new Map(players.map((p) => [p.slot, p.uid]));
     this.buckets = new Map(players.map((p) => [p.uid, { tokens: RATE_LIMIT.capacity, last: Date.now() }]));
@@ -105,7 +105,7 @@ export class Match {
     const { rejects, events } = stepWorld(this.world, commands);
     for (const { slot, seq, reason } of rejects) this.sendReject(this.uidOfSlot.get(slot), seq, reason);
 
-    const delta = this.feed.buildDelta(this.world, events);
+    this.feed.update(this.world, events);
     for (const [uid, slot] of this.slotOfUid) {
       const socket = this.getSocket(uid);
       if (!socket) continue; // 끊긴 사이에는 보내지 않고, 돌아오면 전체 상태를 준다
@@ -113,7 +113,7 @@ export class Match {
         this.needsFull.delete(uid);
         socket.emit(EV.GAME_SNAP, this.feed.full(this.world, slot));
       } else {
-        socket.emit(EV.GAME_SNAP, this.feed.personalize(delta, this.world, slot));
+        socket.emit(EV.GAME_SNAP, this.feed.snapshotFor(this.world, slot));
       }
     }
     if (this.world.result && !this.ended) this.finish();

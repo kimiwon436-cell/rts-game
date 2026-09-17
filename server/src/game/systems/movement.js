@@ -83,12 +83,20 @@ function remainingDistance(unit) {
  */
 function isStuck(unit) {
   const remaining = remainingDistance(unit);
-  if (unit.stuck?.path !== unit.path || remaining < unit.stuck.best - 0.05) {
-    unit.stuck = { path: unit.path, best: remaining, ticks: 0 };
+  const stuck = unit.stuck;
+  if (stuck?.path !== unit.path || remaining < stuck.best - 0.05) {
+    // 가까워지는 동안은 매 틱 여기로 온다: 객체를 새로 만들지 않고 고쳐 쓴다
+    if (stuck) {
+      stuck.path = unit.path;
+      stuck.best = remaining;
+      stuck.ticks = 0;
+    } else {
+      unit.stuck = { path: unit.path, best: remaining, ticks: 0 };
+    }
     return false;
   }
-  unit.stuck.ticks += 1;
-  return unit.stuck.ticks >= STUCK_TICKS;
+  stuck.ticks += 1;
+  return stuck.ticks >= STUCK_TICKS;
 }
 
 function pathBlocked(nav, unit, radius) {

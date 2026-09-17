@@ -91,8 +91,8 @@ test('두 명이 같은 방에 들어가 준비하면 게임이 시작된다', a
   // 첫 스냅샷은 전체 상태(키프레임)다: 농노 4기씩, 영주관 1채씩, 시작 금 200
   const [snap] = await once(alice, EV.GAME_SNAP);
   assert.equal(snap.full, true);
-  assert.equal(snap.addU.length, 8);
-  assert.equal(snap.addB.length, 2);
+  assert.equal(snap.addU.length, 4, '내 농노 4기만 온다 (상대 본진은 안개 속)');
+  assert.equal(snap.addB.length, 1);
   assert.equal(snap.me[0], 200);
 
   // 그 다음부터는 바뀐 것만 오는 델타다 (새로 생긴 유닛이 없으면 addU는 아예 오지 않는다)
@@ -190,7 +190,7 @@ test('경기 중에 끊겨도 유예 시간 안에 돌아오면 이어서 한다
   // 돌아온 사람은 전체 상태를 다시 받는다
   const [snap] = await once(back, EV.GAME_SNAP);
   assert.equal(snap.full, true);
-  assert.equal(snap.addU.length, 8);
+  assert.equal(snap.addU.length, 4);
   assert.ok(snap.t > 0, '경기는 그동안 계속 돌고 있었다');
 
   await online;
@@ -253,4 +253,18 @@ test('2대2 방: 사람이 적은 팀으로 들어가고, 방장만 설정을 �
   const [result] = await ended;
   assert.equal(result.winnerTeam, 0);
   assert.equal(result.players.length, 4);
+});
+
+test('방 목록은 짧은 사이의 변화를 모아 한 번에 보낸다', async () => {
+  const watcher = await connected(player('watcher'));
+  const hosts = await Promise.all(['host1', 'host2', 'host3'].map((name) => connected(player(name))));
+  await new Promise((resolve) => setTimeout(resolve, 300)); // 앞선 테스트의 방송이 끝나기를 기다린다
+  const updates = [];
+  watcher.on(EV.LOBBY_UPDATE, (rooms) => updates.push(rooms));
+
+  const created = await Promise.all(hosts.map((host) => host.emitWithAck(EV.LOBBY_CREATE, {})));
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(updates.length, 1, '세 방이 거의 동시에 생겨도 목록은 한 번만 간다');
+  for (const { room } of created) assert.ok(updates[0].some((r) => r.id === room.id), '모아 보낸 목록에 모든 방이 있다');
+  await Promise.all(hosts.map((host) => host.emitWithAck(EV.LOBBY_LEAVE)));
 });
