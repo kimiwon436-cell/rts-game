@@ -13,7 +13,12 @@ const PLAYERS = [
 ];
 
 let seq = 0;
-const newWorld = () => new World(loadMap('duel01'), PLAYERS);
+/** 궁극 유닛의 규칙만 보려고 지형을 모두 풀밭으로 편 맵 (본진·금광·샘 자리는 그대로). 강·바다 배치와 상관없이 늘 같은 들판이다 */
+const FLAT_MAP = (() => {
+  const map = loadMap('duel01');
+  return { ...map, tiles: new Uint8Array(map.tiles.length) };
+})();
+const newWorld = () => new World(FLAT_MAP, PLAYERS);
 const command = (world, slot, cmd) =>
   stepWorld(world, [{ slot, cmd: { seq: ++seq, unitIds: [], ...cmd } }]).rejects[0]?.reason ?? null;
 

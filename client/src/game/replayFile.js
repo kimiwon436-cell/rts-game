@@ -5,7 +5,10 @@
 // 대신 녹화한 사람의 시점이다 (내 자원·생산 대기열만 들어 있다).
 
 export const REPLAY_FORMAT = 'rune-replay';
-export const REPLAY_VERSION = 2; // 2: 유닛 위치를 움직인 만큼(MOVE)으로 담는다 (1도 읽는다)
+// 2: 유닛 위치를 움직인 만큼(MOVE)으로 담는다. 3: 맵이 바다·강·다리로 바뀌었다
+export const REPLAY_VERSION = 3;
+/** 이보다 옛 리플레이는 지금의 맵과 지형이 달라 열지 않는다 */
+export const REPLAY_MIN_VERSION = 3;
 export const REPLAY_EXTENSION = '.rcr';
 
 /** 한 경기의 스냅샷을 모은다 */
@@ -77,6 +80,7 @@ export async function decodeReplay(file) {
   }
   if (replay?.format !== REPLAY_FORMAT) throw new Error('룬 & 크라운 리플레이 파일이 아닙니다.');
   if (replay.version > REPLAY_VERSION) throw new Error('더 새로운 버전의 리플레이입니다. 게임을 새로고침해 보세요.');
+  if (!(replay.version >= REPLAY_MIN_VERSION)) throw new Error('맵이 바뀌기 전에 녹화한 리플레이라 열 수 없습니다.');
   if (!Array.isArray(replay.snapshots) || !replay.snapshots.length) throw new Error('빈 리플레이입니다.');
   return replay;
 }

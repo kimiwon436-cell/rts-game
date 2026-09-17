@@ -7,6 +7,7 @@ const TERRAIN_COLORS = {
   [TERRAIN.WATER]: '#2e5d86',
   [TERRAIN.ROCK]: '#6c6f73',
   [TERRAIN.TREE]: '#2a4f27',
+  [TERRAIN.BRIDGE]: '#9a7a52',
 };
 const BASE_REFRESH_MS = 1000;
 

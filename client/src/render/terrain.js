@@ -8,8 +8,23 @@ const CHUNK_PX = CHUNK_TILES * S;
 
 const GRASS = ['#4d7a3a', '#53803e', '#497436', '#577f40'];
 const DIRT = ['#7b6647', '#806b4b', '#766143'];
-const WATER = ['#2e5d86', '#2a577e'];
+const WATER = ['#2e5d86', '#2a577e']; // 뭍 가까운 물 (강·해안)
+export const DEEP_WATER = ['#244d71', '#22496b']; // 뭍에서 2칸 넘게 떨어진 물 (바다 한가운데)
 const SHORE = '#5a8fb4';
+const DECK = '#8a6a45';
+
+const isWet = (t) => t === TERRAIN.WATER || t === TERRAIN.BRIDGE || t === -1; // 맵 밖도 바다다
+
+/** 깊은 물 한 칸 (맵 밖 바다 무늬와 같은 그림) */
+export function drawDeepWater(ctx, tx, ty, px, py) {
+  const r = hash2(tx, ty, 1);
+  ctx.fillStyle = DEEP_WATER[r < 0.5 ? 0 : 1];
+  ctx.fillRect(px, py, S, S);
+  if (r > 0.7) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.fillRect(px + 5 + Math.floor(r * 14), py + 9 + Math.floor(hash2(tx, ty, 2) * 14), 10, 2);
+  }
+}
 
 /**
  * 지형을 16×16 타일(512px) 청크 단위로 오프스크린 캔버스에 한 번만 그려 두고,
@@ -86,14 +101,19 @@ export class TerrainCache {
     const t = this.terrainAt(tx, ty);
     const r = hash2(tx, ty, 1);
 
-    if (t === TERRAIN.WATER) {
+    if (t === TERRAIN.WATER || t === TERRAIN.BRIDGE) {
+      // 다리 칸도 바닥은 물이다 (다리 판은 drawProp에서 위에 올린다)
+      if (this.isDeep(tx, ty)) {
+        drawDeepWater(ctx, tx, ty, px, py);
+        return;
+      }
       ctx.fillStyle = WATER[r < 0.5 ? 0 : 1];
       ctx.fillRect(px, py, S, S);
       ctx.fillStyle = SHORE;
-      if (this.terrainAt(tx, ty - 1) !== TERRAIN.WATER) ctx.fillRect(px, py, S, 3);
-      if (this.terrainAt(tx, ty + 1) !== TERRAIN.WATER) ctx.fillRect(px, py + S - 3, S, 3);
-      if (this.terrainAt(tx - 1, ty) !== TERRAIN.WATER) ctx.fillRect(px, py, 3, S);
-      if (this.terrainAt(tx + 1, ty) !== TERRAIN.WATER) ctx.fillRect(px + S - 3, py, 3, S);
+      if (!isWet(this.terrainAt(tx, ty - 1))) ctx.fillRect(px, py, S, 3);
+      if (!isWet(this.terrainAt(tx, ty + 1))) ctx.fillRect(px, py + S - 3, S, 3);
+      if (!isWet(this.terrainAt(tx - 1, ty))) ctx.fillRect(px, py, 3, S);
+      if (!isWet(this.terrainAt(tx + 1, ty))) ctx.fillRect(px + S - 3, py, 3, S);
       if (r > 0.6) {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
         ctx.fillRect(px + 6 + Math.floor(r * 12), py + 10 + Math.floor(hash2(tx, ty, 2) * 12), 9, 2);
@@ -124,8 +144,51 @@ export class TerrainCache {
     }
   }
 
+  /** 둘레 2칸이 모두 물이면 깊은 물로 그린다 */
+  isDeep(tx, ty) {
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) if (!isWet(this.terrainAt(tx + dx, ty + dy))) return false;
+    }
+    return true;
+  }
+
+  /** 다리가 가로로 놓였는가: 이 칸에서 가로로 이어진 다리 칸이 세로보다 길면 가로다 */
+  bridgeRunsHorizontally(tx, ty) {
+    const run = (dx, dy) => {
+      let n = 0;
+      for (let k = 1; k <= 6 && this.terrainAt(tx + dx * k, ty + dy * k) === TERRAIN.BRIDGE; k++) n++;
+      return n;
+    };
+    return run(1, 0) + run(-1, 0) >= run(0, 1) + run(0, -1);
+  }
+
   drawProp(ctx, tx, ty, px, py) {
     const t = this.terrainAt(tx, ty);
+
+    if (t === TERRAIN.BRIDGE) {
+      const horizontal = this.bridgeRunsHorizontally(tx, ty);
+      ctx.fillStyle = DECK;
+      ctx.fillRect(px, py, S, S);
+      // 널빤지: 건너는 방향과 직각으로 이음매를 긋는다
+      ctx.fillStyle = 'rgba(40, 26, 12, 0.35)';
+      for (let k = 0; k < S; k += 8) {
+        if (horizontal) ctx.fillRect(px + k, py, 1, S);
+        else ctx.fillRect(px, py + k, S, 1);
+      }
+      ctx.fillStyle = 'rgba(255, 236, 200, 0.08)';
+      ctx.fillRect(px + (horizontal ? 3 : 0), py + (horizontal ? 0 : 3), horizontal ? 3 : S, horizontal ? S : 3);
+      // 난간: 다리 옆이 물이면
+      ctx.fillStyle = '#4a3520';
+      const side = (dx, dy) => this.terrainAt(tx + dx, ty + dy) === TERRAIN.WATER;
+      if (horizontal) {
+        if (side(0, -1)) ctx.fillRect(px, py, S, 4);
+        if (side(0, 1)) ctx.fillRect(px, py + S - 4, S, 4);
+      } else {
+        if (side(-1, 0)) ctx.fillRect(px, py, 4, S);
+        if (side(1, 0)) ctx.fillRect(px + S - 4, py, 4, S);
+      }
+      return;
+    }
 
     if (t === TERRAIN.ROCK) {
       const up = this.terrainAt(tx, ty - 1) === TERRAIN.ROCK;

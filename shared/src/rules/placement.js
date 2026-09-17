@@ -1,5 +1,5 @@
 import { BUILDINGS } from '../data/buildings.js';
-import { isBlockingTerrain } from '../map/grid.js';
+import { isBuildableTerrain } from '../map/grid.js';
 
 export const PLACE = Object.freeze({
   OK: 'OK',
@@ -44,7 +44,7 @@ export function checkPlacement({ type, x, y, map, tiles, occupied, isWellTaken }
   for (let ty = y; ty < y + size; ty++) {
     for (let tx = x; tx < x + size; tx++) {
       const i = ty * map.width + tx;
-      if (isBlockingTerrain(tiles[i]) || occupied[i]) return PLACE.BLOCKED;
+      if (!isBuildableTerrain(tiles[i]) || occupied[i]) return PLACE.BLOCKED; // 물·다리·숲·바위
     }
   }
   return PLACE.OK;

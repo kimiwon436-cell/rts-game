@@ -2,7 +2,7 @@ import { PLAYER_COLORS, TILE_SIZE } from '@rune/shared/constants.js';
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { UNITS } from '@rune/shared/data/units.js';
 import { ABILITIES } from '@rune/shared/data/abilities.js';
-import { TerrainCache } from './terrain.js';
+import { TerrainCache, drawDeepWater } from './terrain.js';
 import { FogLayer } from './fog.js';
 import {
   drawBuilding,
@@ -21,6 +21,20 @@ const MARKER_MS = 550;
 const MARKER_COLORS = { move: '120, 230, 140', work: '226, 181, 62', place: '226, 181, 62', attack: '235, 90, 80' };
 
 const intersects = (rect, x, y, w, h) => x < rect.x + rect.w && x + w > rect.x && y < rect.y + rect.h && y + h > rect.y;
+const DEEP_SEA = '#234b6d';
+const SEA_PATTERN_TILES = 8;
+
+/** 맵 밖 바다 무늬 (8×8칸을 되풀이한다) */
+function createSeaPattern(ctx) {
+  const canvas = document.createElement('canvas');
+  canvas.width = SEA_PATTERN_TILES * S;
+  canvas.height = SEA_PATTERN_TILES * S;
+  const pattern = canvas.getContext('2d');
+  for (let ty = 0; ty < SEA_PATTERN_TILES; ty++) {
+    for (let tx = 0; tx < SEA_PATTERN_TILES; tx++) drawDeepWater(pattern, tx + 1000, ty + 1000, tx * S, ty * S);
+  }
+  return ctx.createPattern(canvas, 'repeat');
+}
 
 function fillCircle(ctx, x, y, r) {
   ctx.beginPath();
@@ -38,6 +52,7 @@ export class Renderer {
     this.camera = camera;
     this.players = players;
     this.terrain = new TerrainCache(world.map, world.tiles);
+    this.seaPattern = createSeaPattern(this.ctx);
     this.fog = new FogLayer(world.map);
     this.initialMineAmount = new Map(world.map.goldMines.map((m) => [m.id, m.amount]));
     this.dpr = 1;
@@ -69,24 +84,27 @@ export class Renderer {
   draw(timeMs) {
     const { ctx, camera } = this;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#0b0d12';
+    ctx.fillStyle = DEEP_SEA;
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     // 이동량을 기기 픽셀 단위로 반올림해 지형 청크 경계가 벌어지지 않게 한다
     const scale = camera.zoom * this.dpr;
     ctx.setTransform(scale, 0, 0, scale, -Math.round(camera.x * scale), -Math.round(camera.y * scale));
     const view = camera.visibleRect();
+    // 맵 밖도 바다다: 월드 좌표에 붙은 무늬라 맵 가장자리의 깊은 물과 이어져 보인다
+    ctx.fillStyle = this.seaPattern;
+    ctx.fillRect(Math.floor(view.x / S) * S - S, Math.floor(view.y / S) * S - S, view.w + S * 3, view.h + S * 3);
     this.world.updateVision();
     this.fog.update(this.world.vision, this.world.teamOf(this.world.mySlot), timeMs);
 
     this.terrain.draw(ctx, view);
-    this.drawMapBorder(ctx);
     this.drawMines(ctx, view);
     this.drawWells(ctx, view, timeMs);
     this.drawBuildings(ctx, view, timeMs);
     this.drawUnits(ctx, view, timeMs);
     this.drawHealthBars(ctx, view);
-    this.fog.draw(ctx, 0, 0, this.map.width * S, this.map.height * S); // 선택·명령 표시는 안개 위에
+    // 선택·명령 표시는 안개 위에. 맵 밖 바다도 가장자리와 같은 어둡기로 덮는다
+    this.fog.draw(ctx, 0, 0, this.map.width * S, this.map.height * S, true, Math.max(view.w, view.h) + S * 4);
     this.drawCastCursor(ctx, timeMs);
     this.drawSelection(ctx);
     this.drawEffects(ctx);
@@ -97,12 +115,6 @@ export class Renderer {
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.drawDragBox(ctx);
-  }
-
-  drawMapBorder(ctx) {
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
-    ctx.lineWidth = 4 / this.camera.zoom;
-    ctx.strokeRect(0, 0, this.map.width * S, this.map.height * S);
   }
 
   drawMines(ctx, view) {
