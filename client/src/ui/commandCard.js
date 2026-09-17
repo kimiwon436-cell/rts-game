@@ -104,6 +104,7 @@ export function createCommandCard({ onAction }) {
     const tooltip = [
       `${btn.label} (${btn.key})`,
       costEntries.length ? costEntries.map((r) => `${RESOURCE_NAMES[r]} ${btn.cost[r]}`).join(' · ') : null,
+      btn.need,
       btn.note,
     ]
       .filter(Boolean)
@@ -122,7 +123,9 @@ export function createCommandCard({ onAction }) {
       costEntries.length
         ? h('span', { class: 'cc-cost' }, ...costEntries.map((r) => h('span', { class: `c-${r}` }, btn.cost[r])))
         : null,
-      btn.note && !costEntries.length ? h('span', { class: 'cc-note' }, btn.note) : null,
+      // 요구 조건(필요한 건물·시대)은 마우스를 올리지 않아도 늘 보이게 따로 적는다 (모바일에는 툴팁이 없다)
+      btn.need ? h('span', { class: 'cc-need' }, btn.need) : null,
+      btn.note && !costEntries.length && !btn.need ? h('span', { class: 'cc-note' }, btn.note) : null,
     );
   }
 
@@ -218,7 +221,7 @@ function describeUnits(world, units, players, touch) {
         cost: b.cost,
         disabled: locked,
         short: !locked && missingResource(me, b.cost) !== null,
-        note: locked ? `${AGES[b.age].name} 필요` : null,
+        need: locked ? `${AGES[b.age].name} 필요` : null,
         action: { kind: 'build', type },
       };
     });
@@ -349,7 +352,8 @@ function describeBuilding(world, b, players, touch) {
         cost: unit.cost,
         disabled: locked,
         short: !locked && missingResource(me, unit.cost) !== null,
-        note: locked ? `${AGES[unit.age].name} 필요` : `${unit.trainTime}초 · 인구 ${unit.pop}`,
+        need: locked ? `${AGES[unit.age].name} 필요` : null,
+        note: `${unit.trainTime}초 · 인구 ${unit.pop}`,
         action: { kind: 'train', buildingId: b.id, unit: type },
       });
     });
@@ -379,13 +383,14 @@ function describeBuilding(world, b, players, touch) {
     } else if (me.age < MAX_AGE) {
       const next = AGES[me.age + 1];
       let missingNote = null;
-      const missingBuilding = next.requires?.find((type) => !world.hasCompleted(type));
-      if (missingBuilding) missingNote = `${BUILDINGS[missingBuilding].name} 필요`;
+      const mark = (type) => `${BUILDINGS[type].name} ${world.hasCompleted(type) ? '✓' : '✗'}`;
+      if (next.requires?.some((type) => !world.hasCompleted(type))) {
+        missingNote = `필요: ${next.requires.map(mark).join(' · ')}`;
+      }
       if (next.requiresAny) {
         const built = next.requiresAny.types.filter((type) => world.hasCompleted(type));
         if (built.length < next.requiresAny.count) {
-          const names = next.requiresAny.types.map((type) => BUILDINGS[type].name).join('·');
-          missingNote = `${names} 중 ${next.requiresAny.count}종 필요`;
+          missingNote = `${next.requiresAny.count}종 필요: ${next.requiresAny.types.map(mark).join(' · ')}`;
         }
       }
       model.buttons.push({
@@ -394,7 +399,8 @@ function describeBuilding(world, b, players, touch) {
         cost: next.cost,
         disabled: Boolean(missingNote),
         short: !missingNote && missingResource(me, next.cost) !== null,
-        note: missingNote ?? `${next.time}초`,
+        need: missingNote,
+        note: `${next.time}초`,
         action: { kind: 'ageUp' },
       });
     }

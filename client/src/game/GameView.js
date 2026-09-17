@@ -1,6 +1,6 @@
 import { PLAYER_COLORS, TILE_SIZE } from '@rune/shared/constants.js';
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
-import { AGES } from '@rune/shared/data/economy.js';
+import { AGES, RESOURCES, RESOURCE_NAMES, TRIBUTE, tributeReceived } from '@rune/shared/data/economy.js';
 import { UNITS } from '@rune/shared/data/units.js';
 import { ABILITIES, GARRISON } from '@rune/shared/data/abilities.js';
 import { OATHS, OATH_IDS } from '@rune/shared/data/oaths.js';
@@ -69,7 +69,7 @@ export function createGameView({
   const teamGame = players.length > 2;
   const camera = new Camera(map.width * TILE_SIZE, map.height * TILE_SIZE);
   const renderer = new Renderer(canvas, world, camera, players);
-  const minimap = new Minimap(world, camera);
+  const minimap = new Minimap(world, camera, { fog: renderer.fog });
   const input = new Input(canvas);
   const touchMode = isCoarsePointer();
   const commandCard = createCommandCard({ onAction });
@@ -155,6 +155,20 @@ export function createGameView({
       const name = UNITS[event[2]]?.name ?? '궁극 유닛';
       if (event[1] === mySlot) toast(`${name}이(가) 쓰러졌습니다.`, { error: true });
       else toast(`적의 ${name}을(를) 쓰러뜨렸습니다.`);
+    } else if (event[0] === GAME_EVENT.RESOURCES_SENT) {
+      // 서버는 이 이벤트를 보낸 사람의 팀에게만 보낸다
+      const [, from, to, resourceIndex, sent, received] = event;
+      const name = RESOURCE_NAMES[RESOURCES[resourceIndex]];
+      const count = (n) => n.toLocaleString('ko-KR');
+      if (from === mySlot) toast(`${playerName(to)}에게 ${name} ${count(sent)}을(를) 보냈습니다 (${count(received)} 도착).`);
+      else if (to === mySlot) toast(`${playerName(from)}이(가) ${name} ${count(received)}을(를) 보내 왔습니다.`);
+      chat.add({
+        id: `tribute-${world.tick}-${from}-${to}-${resourceIndex}`,
+        scope: 'team',
+        text: `${playerName(from)} → ${playerName(to)}: ${name} ${count(received)}`,
+        at: Date.now(),
+        from: null,
+      });
     }
   };
 
@@ -638,7 +652,8 @@ export function createGameView({
     }
     if (ended) return;
     if (event.code === 'Escape') {
-      if (casting) casting = null;
+      if (!tributePanel.hidden) toggleTribute(false);
+      else if (casting) casting = null;
       else if (targeting) targeting = false;
       else if (placing) cancelPlacing();
       else selection.clear();
@@ -709,18 +724,130 @@ export function createGameView({
   );
   const surrenderButton = h(
     'button',
-    { class: 'btn btn-sm', type: 'button', onClick: () => { surrenderConfirm.hidden = !surrenderConfirm.hidden; } },
+    {
+      class: 'btn btn-sm',
+      type: 'button',
+      onClick: () => {
+        toggleTribute(false);
+        surrenderConfirm.hidden = !surrenderConfirm.hidden;
+      },
+    },
     '항복',
   );
 
+  // ---------- 자원 보내기 (팀전) ----------
+  // 받을 팀원을 고르고 자원 버튼을 누르면 바로 보낸다. 운송 수수료를 떼고 도착한다.
+  const teammates = players.filter((p) => p.slot !== mySlot && (p.team ?? p.slot) === myTeam);
+  let tributeTo = teammates[0]?.slot ?? null;
+  const mateButtons = teammates.map((mate) =>
+    h(
+      'button',
+      {
+        class: 'tribute-mate',
+        type: 'button',
+        role: 'radio',
+        'aria-checked': 'false',
+        onClick: () => {
+          tributeTo = mate.slot;
+          updateTribute();
+        },
+      },
+      h('i', { class: 'swatch', style: `--c: ${PLAYER_COLORS[mate.slot]}` }),
+      h('span', { class: 'tribute-name' }, `P${mate.slot + 1} ${mate.nickname}`),
+      h('span', { class: 'tribute-stock' }, '—'),
+    ),
+  );
+  const amountButtons = [];
+  const tributeRows = RESOURCES.map((resource) =>
+    h(
+      'div',
+      { class: `tribute-row res-${resource}` },
+      h('b', { class: 'res-label' }, RESOURCE_NAMES[resource]),
+      TRIBUTE.amounts.map((amount) => {
+        const button = h(
+          'button',
+          { class: 'btn btn-sm', type: 'button', onClick: () => sendTribute(resource, amount) },
+          `${amount.toLocaleString('ko-KR')} 보내기`,
+        );
+        amountButtons.push({ button, resource, amount });
+        return button;
+      }),
+    ),
+  );
+  const tributePanel = h(
+    'div',
+    { class: 'confirm tribute', role: 'dialog', 'aria-label': '자원 보내기', hidden: true },
+    h('p', { class: 'tribute-title' }, '팀원에게 자원 보내기'),
+    h('div', { class: 'tribute-mates', role: 'radiogroup', 'aria-label': '받을 팀원' }, mateButtons),
+    tributeRows,
+    h('p', { class: 'note' }, `운송 수수료 ${Math.round(TRIBUTE.fee * 100)}% — 100을 보내면 ${tributeReceived(100)}이 도착합니다.`),
+    h('div', { class: 'confirm-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onClick: () => toggleTribute(false) }, '닫기')),
+  );
+  const tributeButton =
+    teammates.length && !tutorial
+      ? h('button', { class: 'btn btn-sm', type: 'button', 'aria-expanded': 'false', onClick: () => toggleTribute() }, '자원 보내기')
+      : null;
+
+  function toggleTribute(open = tributePanel.hidden) {
+    if (open && (!tributeButton || ended)) return;
+    tributePanel.hidden = !open;
+    tributeButton?.setAttribute('aria-expanded', String(open));
+    if (open) {
+      surrenderConfirm.hidden = true;
+      updateTribute();
+    }
+  }
+
+  function sendTribute(resource, amount) {
+    if (tributeTo === null || ended) return;
+    send({ type: CMD.SEND_RESOURCES, to: tributeTo, resource, amount });
+  }
+
+  /** 팀원의 자원과 버튼 상태 (열려 있을 때만 그린다) */
+  function updateTribute() {
+    if (tributePanel.hidden) return;
+    const standing = (slot) => !world.publicPlayers.get(slot)?.defeated;
+    if (tributeTo === null || !standing(tributeTo)) tributeTo = teammates.find((mate) => standing(mate.slot))?.slot ?? null;
+    teammates.forEach((mate, i) => {
+      const button = mateButtons[i];
+      const stock = world.allies.get(mate.slot);
+      button.disabled = !standing(mate.slot);
+      button.setAttribute('aria-checked', String(mate.slot === tributeTo));
+      button.classList.toggle('is-selected', mate.slot === tributeTo);
+      button.lastChild.textContent = !standing(mate.slot)
+        ? '쓰러짐'
+        : stock
+          ? RESOURCES.map((resource) => `${RESOURCE_NAMES[resource]} ${stock[resource].toLocaleString('ko-KR')}`).join(' · ')
+          : '—';
+    });
+    for (const { button, resource, amount } of amountButtons) {
+      button.disabled = ended || tributeTo === null || !world.me || world.me[resource] < amount;
+    }
+  }
+
   // 터치 화면용 도구: Esc·드래그 선택을 대신한다
   const cancelModeButton = h('button', { class: 'touch-btn is-cancel', type: 'button', hidden: true, onClick: () => cancelMode() }, '취소');
+  // 터치에는 Esc가 없고 빈 땅을 누르면 이동 명령이 되므로, 선택을 푸는 버튼을 따로 둔다
+  const deselectButton = h(
+    'button',
+    {
+      class: 'touch-btn',
+      type: 'button',
+      hidden: true,
+      onClick: () => {
+        cancelMode();
+        selection.clear();
+      },
+    },
+    '선택 해제',
+  );
   const chat = createChatBox({ messages: chatMessages, teamGame, variant: 'overlay', onSend: onSendChat });
   const touchTools = touchMode
     ? h(
         'div',
         { class: 'touch-tools', role: 'group', 'aria-label': '빠른 선택' },
         cancelModeButton,
+        deselectButton,
         tutorial ? null : h('button', { class: 'touch-btn', type: 'button', onClick: () => chat.open() }, '채팅'),
         h('button', { class: 'touch-btn', type: 'button', onClick: () => selectArmy() }, '병력 전체'),
         h('button', { class: 'touch-btn', type: 'button', onClick: () => selectIdleWorkers() }, '쉬는 농노'),
@@ -762,6 +889,8 @@ export function createGameView({
     renderer.attackCursor = null;
     surrenderConfirm.hidden = true;
     surrenderButton.disabled = true;
+    toggleTribute(false);
+    if (tributeButton) tributeButton.disabled = true;
 
     recorder?.finish(result);
     const won = result.winnerTeam === myTeam;
@@ -811,7 +940,15 @@ export function createGameView({
       { class: 'hud-top' },
       resources,
       versus,
-      h('div', { class: 'hud-right' }, tutorial ? null : ping, tutorial ? null : surrenderButton, surrenderConfirm),
+      h(
+        'div',
+        { class: 'hud-right' },
+        tutorial ? null : ping,
+        tributeButton,
+        tributeButton ? tributePanel : null,
+        tutorial ? null : surrenderButton,
+        surrenderConfirm,
+      ),
     ),
     h('div', { class: 'hud-banners' }, crownBanner, netBanner, banner),
     h('div', { class: 'hud-minimap' }, minimap.canvas),
@@ -879,7 +1016,9 @@ export function createGameView({
     }
 
     commandCard.update({ world, selection, players, touch: touchMode });
+    updateTribute();
     cancelModeButton.hidden = !(casting || targeting || placing);
+    deselectButton.hidden = selection.size === 0;
   }
 
   // ---------- 루프 ----------

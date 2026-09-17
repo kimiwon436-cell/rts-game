@@ -17,8 +17,15 @@ const hexToRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)
  * 금광·건물·유닛·카메라 영역은 매 프레임 겹쳐 그린다. 클릭·드래그로 화면을 옮긴다.
  */
 export class Minimap {
-  constructor(world, camera, cssSize = 192) {
+  /**
+   * @param {object} world ClientWorld
+   * @param {object} camera
+   * @param {object} [options]
+   * @param {import('./fog.js').FogLayer} [options.fog] 렌더러의 안개 그림 (같은 프레임에 먼저 갱신된다)
+   */
+  constructor(world, camera, { fog = null, cssSize = 192 } = {}) {
     this.world = world;
+    this.fog = fog;
     this.map = world.map;
     this.camera = camera;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -104,6 +111,8 @@ export class Minimap {
       ctx.fillStyle = PLAYER_COLORS[u.owner];
       ctx.fillRect(u.drawX * k - dot / 2, u.drawY * k - dot / 2, dot, dot);
     }
+
+    this.fog?.draw(ctx, 0, 0, canvas.width, canvas.height, false);
 
     const view = camera.visibleRect();
     const px = k / TILE_SIZE;

@@ -5,7 +5,7 @@
 // 대신 녹화한 사람의 시점이다 (내 자원·생산 대기열만 들어 있다).
 
 export const REPLAY_FORMAT = 'rune-replay';
-export const REPLAY_VERSION = 1;
+export const REPLAY_VERSION = 2; // 2: 유닛 위치를 움직인 만큼(MOVE)으로 담는다 (1도 읽는다)
 export const REPLAY_EXTENSION = '.rcr';
 
 /** 한 경기의 스냅샷을 모은다 */

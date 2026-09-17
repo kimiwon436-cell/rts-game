@@ -3,6 +3,7 @@ import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { UNITS } from '@rune/shared/data/units.js';
 import { ABILITIES } from '@rune/shared/data/abilities.js';
 import { TerrainCache } from './terrain.js';
+import { FogLayer } from './fog.js';
 import {
   drawBuilding,
   drawEffect,
@@ -27,7 +28,7 @@ function fillCircle(ctx, x, y, r) {
   ctx.fill();
 }
 
-/** 월드를 캔버스에 그린다: 지형 → 금광·마나 샘 → 건물 → 유닛 → 선택·배치 미리보기 → 표시 */
+/** 월드를 캔버스에 그린다: 지형 → 금광·마나 샘 → 건물 → 유닛 → 안개 → 선택·배치 미리보기 → 표시 */
 export class Renderer {
   constructor(canvas, world, camera, players) {
     this.canvas = canvas;
@@ -37,6 +38,7 @@ export class Renderer {
     this.camera = camera;
     this.players = players;
     this.terrain = new TerrainCache(world.map, world.tiles);
+    this.fog = new FogLayer(world.map);
     this.initialMineAmount = new Map(world.map.goldMines.map((m) => [m.id, m.amount]));
     this.dpr = 1;
 
@@ -74,6 +76,8 @@ export class Renderer {
     const scale = camera.zoom * this.dpr;
     ctx.setTransform(scale, 0, 0, scale, -Math.round(camera.x * scale), -Math.round(camera.y * scale));
     const view = camera.visibleRect();
+    this.world.updateVision();
+    this.fog.update(this.world.vision, this.world.teamOf(this.world.mySlot), timeMs);
 
     this.terrain.draw(ctx, view);
     this.drawMapBorder(ctx);
@@ -82,6 +86,7 @@ export class Renderer {
     this.drawBuildings(ctx, view, timeMs);
     this.drawUnits(ctx, view, timeMs);
     this.drawHealthBars(ctx, view);
+    this.fog.draw(ctx, 0, 0, this.map.width * S, this.map.height * S); // 선택·명령 표시는 안개 위에
     this.drawCastCursor(ctx, timeMs);
     this.drawSelection(ctx);
     this.drawEffects(ctx);

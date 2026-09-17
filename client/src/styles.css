@@ -301,7 +301,10 @@ button, input { font: inherit; color: inherit; }
   cursor: pointer;
 }
 .cc-btn:hover:not(:disabled) { border-color: var(--gold); background: #242a36; }
-.cc-btn:disabled { opacity: 0.45; cursor: default; }
+/* 잠긴 버튼은 이름·비용만 흐리게 하고, 왜 잠겼는지(요구 조건)는 또렷하게 둔다 */
+.cc-btn:disabled { cursor: default; }
+.cc-btn:disabled .cc-label, .cc-btn:disabled .cc-cost, .cc-btn:disabled .cc-note, .cc-btn:disabled .cc-key { opacity: 0.45; }
+.cc-need { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: 10px; line-height: 1.25; color: #f0a35e; word-break: keep-all; }
 .cc-key { position: absolute; top: 2px; right: 5px; font-family: var(--f-mono); font-size: 10px; color: var(--gold); }
 .cc-label { font-size: 11.5px; font-weight: 600; line-height: 1.2; word-break: keep-all; }
 /* 자원 3종 비용(예: 800 300 400)은 한 줄에 안 들어가므로 버튼 안에서 줄을 바꾸고, 버튼이 그만큼 커진다 */
@@ -761,3 +764,28 @@ button, .rp-seek { touch-action: manipulation; }
   .tutorial-text { font-size: 12.5px; }
 }
 @media (max-width: 600px) { .tutorial-panel { top: 60px; } .hud.is-touch .touch-tools { top: 200px; } }
+
+/* ---------- 자원 보내기 (팀전) ---------- */
+.tribute { width: min(300px, calc(100vw - 24px)); gap: 8px; }
+.tribute-title { font-family: var(--f-display); font-weight: 700; }
+.tribute-mates { display: grid; gap: 6px; }
+.tribute-mate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  padding: 6px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+.tribute-mate .swatch { grid-row: span 2; }
+.tribute-mate.is-selected { border-color: var(--gold); background: #242a36; }
+.tribute-mate:disabled { opacity: 0.5; cursor: default; }
+.tribute-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tribute-stock { grid-column: 2; font-family: var(--f-mono); font-size: 11.5px; line-height: 1.4; color: var(--text-soft); }
+.tribute-row { display: grid; grid-template-columns: 40px repeat(2, minmax(0, 1fr)); align-items: center; gap: 6px; }
+.tribute-row .btn { padding-left: 6px; padding-right: 6px; }
+@media (max-width: 600px) { .hud-right .btn-sm { padding: 4px 8px; } }

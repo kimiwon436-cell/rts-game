@@ -17,12 +17,15 @@ const PLAYERS = [
 ];
 const MY_SLOT = 0;
 
+/** 우리 팀에게 보이는 나무 한 칸 (안개 속에서 베인 나무는 볼 때까지 스냅샷에 오지 않는다) */
+const visibleTree = (world) => world.tiles.findIndex((t, i) => t === TERRAIN.TREE && world.vision.isTileVisible(world.teamOf(MY_SLOT), i));
+
 /** 서버를 돌려 녹화본을 만든다. 중간 틱의 서버 상태도 함께 돌려준다. */
 function recordMatch({ ticks = 400, checkpointTick = 200 } = {}) {
   const world = new World(loadMap('duel01'), PLAYERS);
-  const feed = new SnapshotFeed();
+  const feed = new SnapshotFeed(world);
   const recorder = createRecorder({ mapId: 'duel01', players: PLAYERS, mySlot: MY_SLOT });
-  const tree = world.tiles.findIndex((t) => t === TERRAIN.TREE);
+  let tree = -1;
   let checkpoint = null;
 
   for (let i = 0; i < ticks; i++) {
@@ -31,9 +34,13 @@ function recordMatch({ ticks = 400, checkpointTick = 200 } = {}) {
       const peasants = [...world.units.values()].filter((u) => u.owner === MY_SLOT);
       commands.push({ slot: MY_SLOT, cmd: { seq: 1, type: CMD.MOVE, unitIds: peasants.map((u) => u.id), x: 40, y: 60 } });
     }
-    if (i === 250) world.fellTree(tree); // 중간 지점 뒤에 나무가 베인다
+    if (i === 250) {
+      tree = visibleTree(world);
+      world.fellTree(tree); // 중간 지점 뒤에 나무가 베인다
+    }
     const { events } = stepWorld(world, commands);
-    const snap = i === 0 ? feed.full(world, MY_SLOT) : feed.personalize(feed.buildDelta(world, events), world, MY_SLOT);
+    feed.update(world, events);
+    const snap = i === 0 ? feed.full(world, MY_SLOT) : feed.snapshotFor(world, MY_SLOT);
     recorder.add(snap);
     if (world.tick === checkpointTick) checkpoint = captureServer(world);
   }
@@ -43,7 +50,11 @@ function recordMatch({ ticks = 400, checkpointTick = 200 } = {}) {
 // 스냅샷의 t는 한 틱을 진행한 뒤의 world.tick이다
 const captureServer = (world) => ({
   tick: world.tick,
-  units: new Map([...world.units.values()].map((u) => [u.id, { x: u.x, y: u.y, hp: Math.ceil(u.hp) }])),
+  units: new Map(
+    [...world.units.values()]
+      .filter((u) => world.isVisibleTo(world.teamOf(MY_SLOT), u)) // 녹화한 사람의 시점: 안개 속 적은 없다
+      .map((u) => [u.id, { x: u.x, y: u.y, hp: Math.ceil(u.hp) }]),
+  ),
   tiles: Uint8Array.from(world.tiles),
 });
 
@@ -122,13 +133,17 @@ test('끝난 리플레이에서 재생을 누르면 처음부터 다시 튼다',
 
 test('전체 스냅샷에는 이미 베인 나무가 실린다 (재접속 화면에 나무가 되살아나지 않는다)', () => {
   const world = new World(loadMap('duel01'), PLAYERS);
-  const feed = new SnapshotFeed();
-  const tree = world.tiles.findIndex((t) => t === TERRAIN.TREE);
-  world.fellTree(tree);
+  const feed = new SnapshotFeed(world);
   stepWorld(world);
+  const tree = visibleTree(world);
+  const hidden = world.tiles.findIndex((t, i) => t === TERRAIN.TREE && !world.vision.isTileVisible(0, i));
+  world.fellTree(tree);
+  world.fellTree(hidden);
+  const { events } = stepWorld(world);
+  feed.update(world, events);
 
   const full = feed.full(world, MY_SLOT);
-  assert.deepEqual(full.felled, [tree]);
+  assert.deepEqual(full.felled, [tree], '안개 속에서 베인 나무는 아직 모른다');
 
   const client = new ClientWorld(loadMap('duel01'), MY_SLOT);
   let resets = 0;

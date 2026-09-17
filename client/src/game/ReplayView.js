@@ -39,7 +39,7 @@ export function createReplayView({ canvas, replay, onExit }) {
   const world = new ClientWorld(map, replay.mySlot, players);
   const camera = new Camera(map.width * TILE_SIZE, map.height * TILE_SIZE);
   const renderer = new Renderer(canvas, world, camera, players);
-  const minimap = new Minimap(world, camera);
+  const minimap = new Minimap(world, camera, { fog: renderer.fog });
   const input = new Input(canvas);
   const selection = renderer.selection;
   const nameOf = (slot) => players.find((p) => p.slot === slot)?.nickname ?? `P${slot + 1}`;
