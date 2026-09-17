@@ -52,6 +52,16 @@ function sendToRally(world, building, unit) {
   const rally = building.rally;
   if (!rally) return;
 
+  if (UNITS[unit.type].naval) {
+    // 배는 집결지에서 가장 가까운 물로 간다
+    const spot = world.nearestFreeTile(rally.x, rally.y, 48, world.waterNav);
+    if (!spot) return;
+    unit.order = { type: 'move' };
+    unit.state = UNIT_STATE.MOVE;
+    world.requestPath(unit, { rect: { x: spot[0], y: spot[1], w: 1, h: 1 }, adjacent: false, point: { x: spot[0] + 0.5, y: spot[1] + 0.5 } });
+    return;
+  }
+
   if (UNITS[unit.type].worker && (rally.mineId || rally.tile != null)) {
     const target = rally.mineId ? { mineId: rally.mineId } : { tile: rally.tile };
     if (orderGather(world, unit, target)) return;

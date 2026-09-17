@@ -1,4 +1,4 @@
-// 건물 능력치 — docs/GAME_DESIGN.md 5장 (기본 9종 + 왕국 시대 맹세의 성소)
+// 건물 능력치 — docs/GAME_DESIGN.md 5장 (기본 9종 + 왕국 시대 맹세의 성소 + 조선소)
 // size: 정사각형 풋프린트 한 변의 타일 수, pop: 완성 시 늘어나는 인구 상한
 // sight: 완성된 건물의 시야 (풋프린트 중심에서 잰 타일 수, 짓는 중에는 FOUNDATION_SIGHT)
 
@@ -126,6 +126,19 @@ export const BUILDINGS = Object.freeze({
     oathAltar: true,
     hotkey: 'C',
   },
+  shipyard: {
+    id: 'shipyard',
+    name: '조선소',
+    age: 1,
+    size: 3,
+    cost: { gold: 0, wood: 180, mana: 0 },
+    buildTime: 45,
+    hp: 1200,
+    sight: 8,
+    trains: ['war_galley', 'transport_ship', 'catapult_ship'],
+    coastal: true, // 바다와 이어진 물에 두 칸 이상 닿아야 한다 (rules/placement.js)
+    hotkey: 'V',
+  },
 });
 
 /** 건물 하나의 생산 대기열 최대 길이 */
@@ -146,4 +159,5 @@ export const BUILD_MENU = Object.freeze([
   'mage_tower',
   'market',
   'sanctum',
+  'shipyard',
 ]);

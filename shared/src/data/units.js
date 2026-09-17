@@ -1,4 +1,4 @@
-// 유닛 능력치 — docs/GAME_DESIGN.md 3·4장 (기본 7종 + 맹세의 궁극 유닛 3종)
+// 유닛 능력치 — docs/GAME_DESIGN.md 3·4장 (기본 7종 + 맹세의 궁극 유닛 3종 + 해군 3종)
 // 사거리·이동 속도·반지름·시야는 타일 단위, 생산 시간·공격 간격은 초 단위
 
 export const UNITS = Object.freeze({
@@ -178,9 +178,77 @@ export const UNITS = Object.freeze({
     sight: 10,
     attack: { damage: 70, type: 'normal', range: 1.5, cooldown: 2.2, splash: 2 },
     abilities: ['root', 'unload'],
-    garrison: true, // 등 위의 성채
+    // 등 위의 성채: 원거리 유닛은 등 위에서 사거리 +2로 싸우고, 아르카논이 쓰러져도 살아 내린다
+    garrison: {
+      capacity: 6,
+      riders: ['pikeman', 'longbowman', 'royal_guard', 'battlemage'],
+      rangeBonus: 2,
+      ridersFight: true,
+      sinks: false,
+    },
+  },
+
+  // ---------- 해군 (조선소) ----------
+  // naval: 물과 다리 밑으로만 다닌다. 근접 공격은 배에 닿지 않는다 (rules/combat.js)
+  // 순서를 바꾸면 스냅샷의 유닛 번호가 달라지므로 새 유닛은 늘 맨 뒤에 붙인다
+
+  war_galley: {
+    id: 'war_galley',
+    name: '전투 갤리',
+    title: '화살을 퍼붓는 돛배',
+    age: 1,
+    producedAt: 'shipyard',
+    cost: { gold: 60, wood: 100, mana: 0 },
+    trainTime: 30,
+    pop: 2,
+    hp: 320,
+    armor: 'naval',
+    speed: 3.2,
+    radius: 0.6,
+    sight: 9,
+    attack: { damage: 13, type: 'pierce', range: 6, cooldown: 1.6 },
+    naval: true,
+  },
+  transport_ship: {
+    id: 'transport_ship',
+    name: '수송선',
+    title: '병력을 실어 나르는 배',
+    age: 1,
+    producedAt: 'shipyard',
+    cost: { gold: 0, wood: 120, mana: 0 },
+    trainTime: 24,
+    pop: 1,
+    hp: 360,
+    armor: 'naval',
+    speed: 3.4,
+    radius: 0.65,
+    sight: 7,
+    attack: null, // 싸우지 않는다
+    naval: true,
+    abilities: ['unload'],
+    // 궁극 유닛이 아닌 뭍 유닛은 누구나 탄다. 탄 유닛은 싸우지 않고, 배가 가라앉으면 함께 잃는다
+    garrison: { capacity: 8, riders: 'land', rangeBonus: 0, ridersFight: false, sinks: true },
+  },
+  catapult_ship: {
+    id: 'catapult_ship',
+    name: '투석 전함',
+    title: '물가의 건물을 부수는 배',
+    age: 2,
+    producedAt: 'shipyard',
+    cost: { gold: 140, wood: 180, mana: 0 },
+    trainTime: 40,
+    pop: 3,
+    hp: 450,
+    armor: 'naval',
+    speed: 2.3,
+    radius: 0.7,
+    sight: 9,
+    attack: { damage: 40, type: 'siege', range: 8, cooldown: 3.8, splash: 1 },
+    naval: true,
   },
 });
+
+export const isNaval = (type) => Boolean(UNITS[type]?.naval);
 
 /** 궁극 유닛인지 */
 export const isUltimate = (type) => Boolean(UNITS[type]?.ultimate);

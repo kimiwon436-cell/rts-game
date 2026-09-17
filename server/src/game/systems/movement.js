@@ -22,10 +22,11 @@ export function updateMovement(world, dt) {
     if (!unit.path) continue;
     if (!canMove(world, unit)) continue; // 기절·영창·뿌리내림
     const def = UNITS[unit.type];
+    const nav = world.navOf(unit); // 배는 물길
 
-    if (unit.navVersion !== world.nav.version) {
-      unit.navVersion = world.nav.version;
-      if (pathBlocked(world.nav, unit, def.radius * 0.5)) repath(world, unit);
+    if (unit.navVersion !== nav.version) {
+      unit.navVersion = nav.version;
+      if (pathBlocked(nav, unit, def.radius * 0.5)) repath(world, unit);
     }
 
     let step = def.speed * (unit.shieldWall ? SHIELD_WALL.speedMultiplier : 1) * slowFactor(world, unit) * dt;
@@ -44,7 +45,7 @@ export function updateMovement(world, dt) {
       const nx = distance > 0 ? unit.x + (dx / distance) * travel : wx;
       const ny = distance > 0 ? unit.y + (dy / distance) * travel : wy;
 
-      if (world.nav.isBlocked(Math.floor(nx), Math.floor(ny))) {
+      if (nav.isBlocked(Math.floor(nx), Math.floor(ny))) {
         // 옆 유닛에게 밀려 벽 모서리에 걸렸다: 칸 중심으로 돌아가 경로를 다시 찾는다
         recoverFromCorner(world, unit);
         break;
@@ -119,7 +120,7 @@ function repath(world, unit) {
 function recoverFromCorner(world, unit) {
   const tx = Math.floor(unit.x);
   const ty = Math.floor(unit.y);
-  if (!world.nav.isBlocked(tx, ty)) {
+  if (!world.navOf(unit).isBlocked(tx, ty)) {
     unit.x = tx + 0.5;
     unit.y = ty + 0.5;
   }

@@ -16,6 +16,9 @@ function heading(unit) {
   return length > 1e-4 ? [hx / length, hy / length] : null;
 }
 
+/** 배인지 (배와 뭍 유닛은 다니는 곳이 달라 서로 밀지 않는다 — 다리 위 병사와 다리 밑 배) */
+const NAVAL = Object.fromEntries(Object.entries(UNITS).map(([type, def]) => [type, Boolean(def.naval)]));
+
 /** 경제 일을 하는 농노는 서로 겹쳐도 된다 (금광·나무 앞 교통 체증 방지) */
 const ignoresCollision = (unit) =>
   Boolean(unit.carrierId) || // 등에 탄 유닛은 몸이 없다
@@ -37,6 +40,7 @@ export function separateUnits(world) {
   for (let n = 0; n < bodies.length; n++) {
     const a = bodies[n];
     const radius = UNITS[a.type].radius;
+    const naval = NAVAL[a.type];
     const cx = Math.floor(a.x / CELL_SIZE);
     const cy = Math.floor(a.y / CELL_SIZE);
     for (let row = cy - 1; row <= cy + 1; row++) {
@@ -46,7 +50,7 @@ export function separateUnits(world) {
         const cell = row * cols + col;
         for (let i = starts[cell]; i < starts[cell + 1]; i++) {
           const b = items[i];
-          if (b.id <= a.id) continue;
+          if (b.id <= a.id || NAVAL[b.type] !== naval) continue;
           // 한 축으로만 봐도 몸이 닿지 않는 거리면 건너뛴다 (그러면 실제 거리도 닿지 않는다 — 결과는 같고 계산만 준다)
           const reach = radius + UNITS[b.type].radius;
           const dx = b.x - a.x;
@@ -100,8 +104,9 @@ function resolvePair(world, a, b) {
 
 /** 축마다 따로 옮겨서 벽에 닿으면 그 축만 멈춘다 (벽을 따라 미끄러진다) */
 function nudge(world, unit, dx, dy) {
+  const nav = world.navOf(unit);
   const nx = unit.x + dx;
-  if (!world.nav.isBlocked(Math.floor(nx), Math.floor(unit.y))) unit.x = nx;
+  if (!nav.isBlocked(Math.floor(nx), Math.floor(unit.y))) unit.x = nx;
   const ny = unit.y + dy;
-  if (!world.nav.isBlocked(Math.floor(unit.x), Math.floor(ny))) unit.y = ny;
+  if (!nav.isBlocked(Math.floor(unit.x), Math.floor(ny))) unit.y = ny;
 }

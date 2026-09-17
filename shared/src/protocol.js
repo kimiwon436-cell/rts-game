@@ -118,12 +118,14 @@ export const REJECT = Object.freeze({
   OUT_OF_RANGE: 'OUT_OF_RANGE',
   GARRISON_FULL: 'GARRISON_FULL',
   CANNOT_BOARD: 'CANNOT_BOARD',
+  NO_LANDING: 'NO_LANDING', // 배에서 내리려면 뭍 가까이 대야 한다
   // 배치 판정 (shared/src/rules/placement.js의 PLACE와 같은 값)
   OUT_OF_BOUNDS: 'OUT_OF_BOUNDS',
   BLOCKED: 'BLOCKED',
   NEEDS_WELL: 'NEEDS_WELL',
   WELL_TAKEN: 'WELL_TAKEN',
   ON_WELL: 'ON_WELL',
+  NEEDS_COAST: 'NEEDS_COAST',
 });
 
 /** 유닛 상태 코드 (docs/ARCHITECTURE.md 7장) */

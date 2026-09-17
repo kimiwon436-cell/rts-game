@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MAP_LIST, GAME_MODES, loadMap } from '../src/map/maps/index.js';
-import { isBlockingTerrain } from '../src/map/grid.js';
+import { TERRAIN, isBlockingTerrain, isBuildableTerrain } from '../src/map/grid.js';
+import { seaWater } from '../src/map/water.js';
 
 const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
@@ -28,12 +29,12 @@ for (const { id, mode } of MAP_LIST) {
     });
   });
 
-  test(`${id}: 시설은 맵 안의 트인 땅에 있고 서로 겹치지 않는다`, () => {
+  test(`${id}: 시설은 맵 안의 트인 땅(물·다리가 아닌 곳)에 있고 서로 겹치지 않는다`, () => {
     for (const r of facilities) {
       assert.ok(r.x >= 0 && r.y >= 0 && r.x + r.w <= W && r.y + r.h <= H, `${r.id}이 맵 밖에 있다`);
       for (let y = r.y; y < r.y + r.h; y++) {
         for (let x = r.x; x < r.x + r.w; x++) {
-          assert.ok(!isBlockingTerrain(tiles[y * W + x]), `${r.id} (${x}, ${y})`);
+          assert.ok(isBuildableTerrain(tiles[y * W + x]), `${r.id} (${x}, ${y})`);
         }
       }
     }
@@ -89,6 +90,51 @@ for (const { id, mode } of MAP_LIST) {
       const cy = keep.y + keep.h / 2;
       const nearest = Math.min(...map.goldMines.map((g) => Math.hypot(g.x + g.w / 2 - cx, g.y + g.h / 2 - cy)));
       assert.ok(nearest <= 14, `슬롯 ${slot} 본진 옆 금광이 멀다 (${nearest.toFixed(1)}타일)`);
+    }
+  });
+
+  test(`${id}: 바다가 섬을 두르고, 모든 물(강)은 바다와 이어지며, 강은 다리로 건넌다`, () => {
+    for (let x = 0; x < W; x++) {
+      assert.equal(tiles[x], TERRAIN.WATER, `위 가장자리 (${x}, 0)`);
+      assert.equal(tiles[(H - 1) * W + x], TERRAIN.WATER, `아래 가장자리 (${x}, ${H - 1})`);
+    }
+    for (let y = 0; y < H; y++) {
+      assert.equal(tiles[y * W], TERRAIN.WATER, `왼쪽 가장자리 (0, ${y})`);
+      assert.equal(tiles[y * W + W - 1], TERRAIN.WATER, `오른쪽 가장자리 (${W - 1}, ${y})`);
+    }
+    const sea = seaWater(map);
+    const lakes = [...tiles].filter((t, i) => t === TERRAIN.WATER && !sea[i]).length;
+    assert.equal(lakes, 0, '배가 갇히는 호수가 없다');
+    assert.ok([...tiles].filter((t) => t === TERRAIN.BRIDGE).length >= 30, '강을 건너는 다리가 있다');
+  });
+
+  test(`${id}: 모든 본진 가까이에 조선소를 지을 물가가 있다`, () => {
+    const sea = seaWater(map);
+    const taken = new Uint8Array(W * H);
+    for (const r of facilities) {
+      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) taken[y * W + x] = 1;
+    }
+    for (const { slot, keep } of map.starts) {
+      const cx = keep.x + keep.w / 2;
+      const cy = keep.y + keep.h / 2;
+      let nearest = Infinity;
+      for (let y = 1; y < H - 4; y++) {
+        for (let x = 1; x < W - 4; x++) {
+          let ok = true;
+          for (let ty = y; ty < y + 3 && ok; ty++) {
+            for (let tx = x; tx < x + 3; tx++) {
+              if (!isBuildableTerrain(tiles[ty * W + tx]) || taken[ty * W + tx]) ok = false;
+            }
+          }
+          if (!ok) continue;
+          let coast = 0;
+          for (let t = 0; t < 3; t++) {
+            for (const [tx, ty] of [[x + t, y - 1], [x + t, y + 3], [x - 1, y + t], [x + 3, y + t]]) coast += sea[ty * W + tx];
+          }
+          if (coast >= 2) nearest = Math.min(nearest, Math.hypot(x + 1.5 - cx, y + 1.5 - cy));
+        }
+      }
+      assert.ok(nearest <= 12, `슬롯 ${slot} 본진에서 조선소 자리가 멀다 (${nearest.toFixed(1)}타일)`);
     }
   });
 }

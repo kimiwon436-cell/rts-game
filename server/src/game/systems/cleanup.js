@@ -1,4 +1,5 @@
 import { UNITS } from '@rune/shared/data/units.js';
+import { garrisonOf } from '@rune/shared/rules/garrison.js';
 import { GAME_EVENT } from '@rune/shared/protocol.js';
 import { onUltimateDied } from './abilities.js';
 
@@ -9,7 +10,15 @@ import { onUltimateDied } from './abilities.js';
 export function removeDead(world) {
   for (const unit of world.units.values()) {
     if (unit.hp > 0) continue;
-    if (UNITS[unit.type].ultimate) onUltimateDied(world, unit); // 부활 예약·탑승 유닛 내리기
+    if (UNITS[unit.type].ultimate) {
+      onUltimateDied(world, unit); // 부활 예약·탑승 유닛 내리기
+    } else if (unit.garrison.length && garrisonOf(unit.type)?.sinks) {
+      // 수송선이 가라앉으면 탄 유닛도 함께 잃는다
+      for (const id of unit.garrison) {
+        const rider = world.units.get(id);
+        if (rider) rider.hp = 0;
+      }
+    }
     world.units.delete(unit.id);
     world.events.push([GAME_EVENT.UNIT_DIED, unit.id]);
   }

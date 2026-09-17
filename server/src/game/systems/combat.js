@@ -1,6 +1,6 @@
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { UNITS } from '@rune/shared/data/units.js';
-import { GARRISON } from '@rune/shared/data/abilities.js';
+import { garrisonOf } from '@rune/shared/rules/garrison.js';
 import { GAME_EVENT, UNIT_STATE } from '@rune/shared/protocol.js';
 import { attackReach, computeDamage, isMelee } from '@rune/shared/rules/combat.js';
 import { lineOfSight } from '../pathfinding/astar.js';
@@ -17,6 +17,7 @@ const CHASE_REPATH_TICKS = 10; // 쫓아갈 때 0.5초마다 경로를 새로 �
 const WORKER_TARGET_PENALTY = 2; // 싸울 수 있는 유닛을 농노보다 먼저 노린다
 const BUILDING_TARGET_PENALTY = 3; // 유닛을 건물보다 먼저 노린다
 const CHAIN_RANGE = 4; // 연쇄 번개가 튕기는 거리 (타일)
+const SHORE_SEARCH = 8; // 물과 뭍 사이로 쫓을 때 목표에서 이만큼 안의 내 쪽 칸(물가)으로 간다
 const GRID_CELL = 4; // 표적 찾기용 공간 색인 한 칸 (타일)
 const MAX_UNIT_RADIUS = Math.max(...Object.values(UNITS).map((def) => def.radius));
 
@@ -36,8 +37,17 @@ const targetInfo = (entity) =>
 const isEnemyAlive = (world, entity, owner) =>
   Boolean(entity) && entity.hp > 0 && world.areEnemies(entity.owner, owner) && !entity.carrierId;
 
-/** 등 위의 원거리 유닛은 사거리가 늘어난다 */
-const rangeBonus = (unit) => (unit.carrierId ? GARRISON.rangeBonus : 0);
+/** 등 위의 원거리 유닛은 사거리가 늘어난다 (아르카논 +2, 수송선은 0) */
+const rangeBonus = (world, unit) => (unit.carrierId ? (garrisonOf(world.units.get(unit.carrierId)?.type)?.rangeBonus ?? 0) : 0);
+
+/** 태운 쪽 위에서 싸울 수 있는가: 태운 쪽이 허락하고(아르카논) 원거리 유닛일 때만. 수송선 안에서는 싸우지 않는다 */
+function canFightAboard(world, unit, def) {
+  const carrier = world.units.get(unit.carrierId);
+  return Boolean(carrier && garrisonOf(carrier.type)?.ridersFight) && !isMelee(def.attack);
+}
+
+/** 물 위에 있는 대상인가 (배). 건물은 모두 뭍에 있다 */
+const onWater = (entity) => isUnit(entity) && Boolean(UNITS[entity.type].naval);
 
 /** 유닛 몸과 대상(유닛 몸 또는 건물 사각형)의 가장자리 사이 거리 */
 export function gapBetween(unit, target) {
@@ -61,9 +71,11 @@ export function updateCombat(world, dt) {
   world.combatGrid.build(units);
 
   for (const unit of world.units.values()) {
+    const def = UNITS[unit.type];
+    if (!def.attack) continue; // 싸우지 않는 유닛 (수송선)
     if (unit.cooldown > 0) unit.cooldown = Math.max(0, unit.cooldown - dt);
     if (!canAct(world, unit)) continue; // 기절·영창·뿌리내리는 중에는 싸우지 않는다
-    if (unit.carrierId && isMelee(UNITS[unit.type].attack)) continue; // 등 위에서는 근접 공격을 할 수 없다
+    if (unit.carrierId && !canFightAboard(world, unit, def)) continue; // 등 위에서는 원거리 공격만, 수송선 안에서는 못 싸운다
     const target = chooseTarget(world, unit);
     if (target) engage(world, unit, target);
   }
@@ -99,7 +111,7 @@ function chooseTarget(world, unit) {
 
   let target = unit.combatTargetId != null ? world.entity(unit.combatTargetId) : null;
   if (!isEnemyAlive(world, target, unit.owner) || !world.isVisibleTo(team, target)) target = null;
-  const seekRange = acquireRange(def.attack) + rangeBonus(unit);
+  const seekRange = acquireRange(def.attack) + rangeBonus(world, unit);
   if (target && unit.autoTarget && gapBetween(unit, target) > seekRange + LEASH_EXTRA) target = null;
   if (!target && unit.combatTargetId != null) disengage(world, unit);
 
@@ -139,7 +151,7 @@ function disengage(world, unit) {
 }
 
 function findEnemy(world, unit, def) {
-  const range = acquireRange(def.attack) + rangeBonus(unit);
+  const range = acquireRange(def.attack) + rangeBonus(world, unit);
   const team = world.teamOf(unit.owner);
   const { vision } = world;
 
@@ -206,7 +218,7 @@ function engage(world, unit, target) {
   const def = UNITS[unit.type];
   unit.state = UNIT_STATE.ATTACK;
 
-  if (gapBetween(unit, target) <= attackReach(def.attack) + rangeBonus(unit)) {
+  if (gapBetween(unit, target) <= attackReach(def.attack) + rangeBonus(world, unit)) {
     unit.path = null;
     unit.pathPending = false;
     if (unit.cooldown <= 0) {
@@ -225,17 +237,30 @@ function engage(world, unit, target) {
 }
 
 function chase(world, unit, def, target) {
+  const nav = world.navOf(unit);
+  if (Boolean(def.naval) !== onWater(target)) {
+    // 배가 뭍의 적을, 뭍의 원거리 유닛이 배를 쫓는다: 목표에서 가장 가까운 내 쪽 칸(물가)까지만 간다
+    const cx = isUnit(target) ? target.x : target.x + target.w / 2;
+    const cy = isUnit(target) ? target.y : target.y + target.h / 2;
+    const spot = world.nearestFreeTile(cx, cy, SHORE_SEARCH, nav);
+    if (!spot) {
+      if (unit.order?.type === 'attack') world.stopUnit(unit); // 닿을 수 없는 적
+      return;
+    }
+    world.moveUnit(unit, { x: spot[0], y: spot[1], w: 1, h: 1 }, false);
+    return;
+  }
   if (!isUnit(target)) {
     world.moveUnit(unit, target, true);
     return;
   }
   const tile = { x: Math.floor(target.x), y: Math.floor(target.y), w: 1, h: 1 };
   // 곧장 보이면 적의 위치로 직선으로 다가간다 (칸 경로는 적 칸 옆 칸에서 멈춰 근접 공격이 안 닿을 수 있다)
-  if (lineOfSight(world.nav, unit.x, unit.y, target.x, target.y, def.radius)) {
+  if (lineOfSight(nav, unit.x, unit.y, target.x, target.y, def.radius)) {
     unit.path = [[target.x, target.y]];
     unit.pathPending = false;
     unit.goal = { rect: tile, adjacent: true, point: null };
-    unit.navVersion = world.nav.version;
+    unit.navVersion = nav.version;
     return;
   }
   world.moveUnit(unit, tile, true);

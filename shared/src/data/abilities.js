@@ -65,17 +65,19 @@ export const ABILITIES = Object.freeze({
     name: '내리기',
     kind: 'instant',
     hotkey: 'G',
-    desc: '등에 태운 유닛을 모두 내린다',
+    desc: '태운 유닛을 모두 내린다 (배는 뭍 가까이에서)',
   }),
 });
 
 /** 스냅샷에서 능력을 숫자로 보낼 때 쓰는 순서 */
 export const ABILITY_IDS = Object.freeze(Object.keys(ABILITIES));
 
-/** 등 위의 성채 (아르카논) */
+/**
+ * 태우기 (아르카논·수송선). 정원·탈 수 있는 유닛은 태우는 쪽 데이터(UNITS[type].garrison)에 있다.
+ * - boardRange: 태우는 쪽 몸에서 이 거리 안에 오면 올라탄다 (수송선은 물가에 대면 뭍에서 탄다)
+ * - landingRange: 배에서 내릴 때 이 거리 안에 뭍이 있어야 한다
+ */
 export const GARRISON = Object.freeze({
-  capacity: 6,
-  allow: Object.freeze(['pikeman', 'longbowman', 'royal_guard', 'battlemage']),
-  rangeBonus: 2, // 등 위의 원거리 유닛은 사거리가 이만큼 늘어난다
-  boardRange: 1.6, // 이 거리 안에 오면 올라탄다
+  boardRange: 1.6,
+  landingRange: 2.5,
 });

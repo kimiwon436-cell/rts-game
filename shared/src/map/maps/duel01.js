@@ -1,119 +1,53 @@
-import { TERRAIN, isBlockingTerrain } from '../grid.js';
-import { mulberry32 } from '../../random.js';
-
-const SIZE = 96;
+import { TERRAIN } from '../grid.js';
+import { createMapBuilder } from '../builder.js';
 
 /**
- * 1v1 맵 "duel01" — 기획서의 맵 개념도를 96×96 타일로 옮겼다.
- * P1(왼쪽 아래)을 기준으로 배치하고, 맵 중심에 대해 점대칭으로 P2 쪽을 만든다.
- * 서버와 클라이언트가 같은 코드로 같은 맵을 만들기 때문에 네트워크로는 mapId만 보낸다.
+ * 1v1 "갈라진 레이 라인" (96×96). 바다로 둘러싸인 섬.
+ * 두 본진 옆을 지나는 강이 가운데 섬을 휘감아 서로 이어진다 — 배는 강으로 곧장, 또는 바다로 돌아서 간다.
+ * 걸어서는 본진 앞의 다리나, 태초의 샘이 있는 가운데 섬의 다리 둘을 건너야 상대 쪽에 닿는다.
  */
 export function createDuel01() {
-  const tiles = new Uint8Array(SIZE * SIZE); // 기본은 풀밭(0)
-  const rand = mulberry32(0x52554e45);
+  const m = createMapBuilder({ width: 96, height: 96, seed: 0x52554e45 });
+  const { TREE, ROCK } = TERRAIN;
 
-  const inside = (x, y) => x >= 0 && y >= 0 && x < SIZE && y < SIZE;
-  const get = (x, y) => tiles[y * SIZE + x];
-  // 타일 하나를 바꾸면 대칭 위치도 함께 바꾼다 — 그래서 결과는 항상 공정하다
-  const setSym = (x, y, t) => {
-    if (!inside(x, y)) return;
-    tiles[y * SIZE + x] = t;
-    tiles[(SIZE - 1 - y) * SIZE + (SIZE - 1 - x)] = t;
-  };
-  const mirrorRect = ({ x, y, w, h }) => ({ x: SIZE - w - x, y: SIZE - h - y, w, h });
-  const centerOf = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+  // 1) 숲과 바위 (P1 쪽을 그리면 대칭으로 P2 쪽이 생긴다)
+  m.blob(8, 88, 5, TREE); // 본진 뒤
+  m.blob(20, 58, 3.5, TREE); // 본진과 앞마당 사이
+  m.blob(24, 40, 4, TREE); // 왼쪽 중간
+  m.blob(50, 88, 5, TREE); // 강 건너 아래
+  m.blob(84, 84, 5, TREE); // 오른쪽 아래 모서리
+  m.blob(28, 34, 2, ROCK);
+  m.blob(56, 76, 2, ROCK);
+  m.scatter(70, TREE, (x, y) => y > x);
 
-  // P1 쪽 시설 (P2 쪽은 대칭)
-  const p1Keep = { x: 14, y: 78, w: 4, h: 4 };
-  const p1Gold = [
-    { x: 7, y: 70, w: 3, h: 3, amount: 2000 }, // 본진 금광
-    { x: 5, y: 50, w: 3, h: 3, amount: 3000 }, // 앞마당 금광
-  ];
-  const p1Wells = [
-    { x: 30, y: 84, w: 2, h: 2, kind: 'home' },
-    { x: 13, y: 47, w: 2, h: 2, kind: 'expansion' },
-    { x: 26, y: 26, w: 2, h: 2, kind: 'contested' },
-  ];
-  const primordial = { x: 47, y: 47, w: 2, h: 2, kind: 'primordial' };
+  // 2) 바다와 강: 아래 바다에서 P1 본진 동쪽을 따라 올라와 가운데 섬을 감싸고, 대칭으로 P2 쪽 바다로 나간다
+  m.sea(4);
+  m.river([{ x: 30, y: 100 }, { x: 31, y: 88 }, { x: 34, y: 76 }, { x: 39, y: 65 }, { x: 43, y: 58 }], 2.2);
+  m.river([{ x: 43, y: 58 }, { x: 39, y: 50 }, { x: 41, y: 42 }, { x: 47, y: 38 }, { x: 52, y: 37 }], 2); // 섬 서쪽·북쪽 물길
 
-  const blob = (cx, cy, r, terrain) => {
-    for (let y = Math.floor(cy - r - 1); y <= Math.ceil(cy + r + 1); y++) {
-      for (let x = Math.floor(cx - r - 1); x <= Math.ceil(cx + r + 1); x++) {
-        const d = Math.hypot(x - cx, y - cy) + (rand() - 0.5) * 1.2;
-        if (d < r) setSym(x, y, terrain);
-      }
-    }
-  };
+  // 3) 다리: 본진 앞, 가운데 섬 서쪽 (대칭으로 P2 쪽에도 하나씩)
+  m.bridge({ x: 30, y: 70 }, { x: 43, y: 70 });
+  m.bridge({ x: 33, y: 49 }, { x: 45, y: 47 });
 
-  // 1) 숲, 호수, 바위
-  blob(5, 90, 6, TERRAIN.TREE); // 본진 뒤
-  blob(3, 60, 4, TERRAIN.TREE); // 왼쪽 가장자리
-  blob(48, 93, 5, TERRAIN.TREE); // 아래 가운데
-  blob(86, 88, 6, TERRAIN.TREE); // 오른쪽 아래 모서리
-  blob(36, 76, 3, TERRAIN.TREE); // 본진 앞 작은 숲
-  blob(22, 40, 4, TERRAIN.TREE); // 왼쪽 중간
-  blob(30, 58, 3.5, TERRAIN.WATER);
-  blob(58, 84, 3, TERRAIN.WATER);
-  blob(42, 57, 2.2, TERRAIN.ROCK);
-  blob(54, 74, 2, TERRAIN.ROCK);
-
-  // 2) 흩어진 나무
-  for (let i = 0; i < 70; i++) {
-    const x = Math.floor(rand() * SIZE);
-    const y = Math.floor(rand() * SIZE);
-    if (y > x) setSym(x, y, TERRAIN.TREE);
-  }
-
-  // 3) 본진 공터
-  const kc = centerOf(p1Keep);
-  for (let y = kc.y - 9; y <= kc.y + 9; y++) {
-    for (let x = kc.x - 9; x <= kc.x + 9; x++) {
-      const d = Math.hypot(x + 0.5 - kc.x, y + 0.5 - kc.y) + (rand() - 0.5) * 1.5;
-      if (d < 7.5) setSym(x, y, TERRAIN.DIRT);
-    }
-  }
-
-  // 4) 시설 주변과 본진에서 시설까지의 길목을 비워 모든 시설에 걸어서 닿게 한다
-  const clearRect = ({ x, y, w, h }, margin) => {
-    for (let ty = y - margin; ty < y + h + margin; ty++) {
-      for (let tx = x - margin; tx < x + w + margin; tx++) {
-        if (inside(tx, ty) && isBlockingTerrain(get(tx, ty))) setSym(tx, ty, TERRAIN.GRASS);
-      }
-    }
-  };
-  const carveLine = (a, b) => {
-    const steps = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) * 2);
-    for (let s = 0; s <= steps; s++) {
-      const px = a.x + ((b.x - a.x) * s) / steps;
-      const py = a.y + ((b.y - a.y) * s) / steps;
-      for (let oy = -1; oy <= 1; oy++) {
-        for (let ox = -1; ox <= 1; ox++) {
-          const tx = Math.floor(px) + ox;
-          const ty = Math.floor(py) + oy;
-          if (inside(tx, ty) && isBlockingTerrain(get(tx, ty))) setSym(tx, ty, TERRAIN.GRASS);
-        }
-      }
-    }
-  };
-
-  clearRect(p1Keep, 3);
-  p1Gold.forEach((g) => clearRect(g, 2));
-  [...p1Wells, primordial].forEach((w) => clearRect(w, 3));
-  for (const target of [...p1Gold, ...p1Wells, primordial]) carveLine(kc, centerOf(target));
-
-  const goldMines = [...p1Gold, ...p1Gold.map((g) => ({ ...mirrorRect(g), amount: g.amount }))];
-  const wells = [...p1Wells, ...p1Wells.map((w) => ({ ...mirrorRect(w), kind: w.kind })), primordial];
-
-  return {
+  return m.finish({
     id: 'duel01',
     name: '갈라진 레이 라인',
-    description: '호수와 숲 사이로 길이 여럿 난 기본 1대1 맵. 가운데 태초의 샘이 있다.',
+    description: '바다에 둘러싸인 섬. 두 본진 옆을 지나는 강이 가운데 섬을 감싸고, 다리 셋으로 건넌다.',
     teamSize: 1,
-    width: SIZE,
-    height: SIZE,
-    tiles,
-    starts: [p1Keep, mirrorRect(p1Keep)].map((keep, slot) => ({ slot, team: slot, keep })),
-    goldMines: goldMines.map((g, i) => ({ id: `gold${i}`, ...g })),
-    wells: wells.map((w, i) => ({ id: `well${i}`, ...w, rate: w.kind === 'primordial' ? 4 : 1.5 })),
-  };
+    bases: [
+      {
+        keep: { x: 14, y: 78, w: 4, h: 4 },
+        gold: [
+          { x: 9, y: 70, w: 3, h: 3, amount: 2000 }, // 본진 금광
+          { x: 9, y: 50, w: 3, h: 3, amount: 3000 }, // 앞마당 금광
+        ],
+        wells: [
+          { x: 24, y: 69, w: 2, h: 2, kind: 'home' },
+          { x: 14, y: 45, w: 2, h: 2, kind: 'expansion' },
+        ],
+      },
+    ],
+    sharedWells: [{ x: 26, y: 24, w: 2, h: 2, kind: 'contested' }],
+    primordial: { x: 47, y: 47, w: 2, h: 2, kind: 'primordial' },
+  });
 }
