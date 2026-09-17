@@ -245,7 +245,7 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 | S→C | `game:reject` | 거부된 명령 `{ seq, reason }` → "자원이 부족합니다" 등 |
 | S→C | `game:end` | 승자, 승리 유형, 통계 |
 
-명령 타입: `move` `attackMove` `attack` `stop` `gather` `returnCargo` `place` `construct` `cancelBuild` `train` `cancelTrain` `setRally` `ageUp` `cancelAgeUp` `trade` `toggleAbility` `surrender`
+명령 타입: `move` `attackMove` `attack` `stop` `gather` `returnCargo` `place` `construct` `cancelBuild` `train` `cancelTrain` `setRally` `ageUp` `cancelAgeUp` `trade` `toggleAbility` `useAbility` `board` `takeOath` `sendResources` `surrender`
 
 ### 스냅샷 포맷 (`shared/src/snapshot.js`, `server/src/game/sync/snapshot.js`)
 
@@ -266,13 +266,15 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
   ev:   [[GAME_EVENT.ATTACK, 공격자, 대상], [GAME_EVENT.UNIT_DIED, id]],
   me:   [금, 목재, 마나, 인구, 상한, 시대, ...],  // 내 것만, 바뀐 틱에만
   own:  { q: 생산 대기열, r: 집결지 }            // 내 건물만, 바뀐 틱에만
+  allies: [[slot, 금, 목재, 마나]]                // 팀원 자원 (팀전), 0.5초마다 바뀌었을 때만
 }
 ```
 
 - **빈 항목은 키째로 뺀다.** 아무도 움직이지 않는 틱에는 `{ t }`만 나간다.
 - 좌표는 1/16타일 정수 (96타일 × 16 = 1536). 소수점 없이 짧다.
 - 공격 모션, 투사체, 사망 효과는 상태가 아니라 **이벤트**로 보낸다.
-- 상대의 자원과 생산 대기열은 보내지 않는다. `me`·`own`은 플레이어별 개인화 단계에서만 얹는다.
+- 상대의 자원과 생산 대기열은 보내지 않는다. `me`·`own`·`allies`는 플레이어별 개인화 단계에서만 얹는다.
+- 팀에게만 가는 이벤트(`RESOURCES_SENT`)는 공용 델타에서 빼 두었다가 그 팀의 스냅샷에만 얹는다.
 - 실측(2인, 유닛 8기 채취 중): 평균 **87B/틱**, 최대 476B, 같은 상황의 전체 스냅샷은 513B.
 - 더 커지면 `perMessageDeflate`(1KB 이상 압축) → msgpack 파서 순서로 최적화한다.
 
@@ -347,6 +349,8 @@ MVP는 `Map<id, entity>`에 평범한 객체를 담는다.
 - **방**: `{ mode: '1v1'|'2v2'|'3v3', mapId, players[{ uid, nickname, team, slot, ready, connected }] }`.
   방장만 방식·맵을 바꾸고(모드에 맞는 맵만), 바꾸면 모두의 준비가 풀린다. 팀 인원이 모두 차고 모두 준비하면 카운트다운.
   들어오는 사람은 인원이 적은 팀으로 간다.
+- **자원 보내기** (`sendResources { to, resource, amount }`): 같은 팀·안 쓰러진 두 사람 사이에서만,
+  가진 만큼만(내림한 값으로 비교). 받는 쪽에는 `TRIBUTE.fee`(10%)를 뗀 내림 값이 들어간다 (`shared/src/data/economy.js`).
 
 ---
 

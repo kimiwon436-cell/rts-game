@@ -2,8 +2,8 @@
 // 틱마다 바뀐 것만 보낸다 (아래 델타 절). 첫 입장·재접속 때만 전체 상태를 보낸다.
 //
 // 스냅샷 모양:
-// { t, full?, players?, addU?, updU?, addB?, updB?, del?, mines?, ev?, me?, own? }
-// me와 own은 받는 플레이어의 것만 들어 있고, 바뀌지 않은 항목은 아예 오지 않는다.
+// { t, full?, players?, addU?, updU?, addB?, updB?, del?, mines?, ev?, me?, own?, allies? }
+// me·own·allies는 받는 플레이어의 것만 들어 있고, 바뀌지 않은 항목은 아예 오지 않는다.
 
 import { TICK_MS } from './constants.js';
 import { UNIT_TYPES } from './data/units.js';
@@ -192,6 +192,21 @@ export function decodeOwn(own) {
     cooldowns.get(id)[ABILITY_IDS[ability]] = readyTick;
   }
   return { queues, rallies, cooldowns };
+}
+
+/** 팀원의 자원 (팀전): [[slot, 금, 목재, 마나]] — 받는 사람 자신은 뺀다. 1대1이면 빈 배열 */
+export function encodeAllies(players, slot) {
+  const team = players[slot].team ?? slot;
+  const allies = [];
+  for (const p of players) {
+    if (!p || p.slot === slot || (p.team ?? p.slot) !== team) continue;
+    allies.push([p.slot, Math.floor(p.gold), Math.floor(p.wood), Math.floor(p.mana)]);
+  }
+  return allies;
+}
+
+export function decodeAllies(list) {
+  return new Map(list.map(([slot, gold, wood, mana]) => [slot, { gold, wood, mana }]));
 }
 
 export function decodePlayer(a) {

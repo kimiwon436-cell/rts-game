@@ -83,6 +83,7 @@ export const CMD = Object.freeze({
   USE_ABILITY: 'useAbility', // { unitIds, ability, x, y } — 땅을 찍어 쓰거나 바로 쓴다
   BOARD: 'board', // { unitIds, targetId } — 아르카논 등에 태우기
   TAKE_OATH: 'takeOath', // { oath: 'crown' | 'rune' | 'earth' } — 한 경기에 한 번
+  SEND_RESOURCES: 'sendResources', // { to: 팀원 슬롯, resource: 'gold' | 'wood' | 'mana', amount } — 수수료를 떼고 도착한다
   SURRENDER: 'surrender', // {}
 });
 
@@ -152,4 +153,5 @@ export const GAME_EVENT = Object.freeze({
   ABILITY: 13, // [code, unitId, abilityIndex, x16, y16] — 능력 사용 효과 (x·y는 대상 지점)
   ULTIMATE_REVIVED: 14, // [code, unitId, ownerSlot] — 솔라리온 부활
   ULTIMATE_LOST: 15, // [code, ownerSlot, unitTypeIndex] — 궁극 유닛이 쓰러졌다
+  RESOURCES_SENT: 16, // [code, fromSlot, toSlot, resourceIndex, sent, received] — 보낸 사람의 팀에게만
 });

@@ -2,7 +2,7 @@ import { UNITS } from '@rune/shared/data/units.js';
 import { BUILDINGS, BUILD_MENU, PRODUCTION_QUEUE_MAX } from '@rune/shared/data/buildings.js';
 import { ABILITIES } from '@rune/shared/data/abilities.js';
 import { OATHS, OATH_IDS } from '@rune/shared/data/oaths.js';
-import { AGES, MAX_AGE, RESOURCES } from '@rune/shared/data/economy.js';
+import { AGES, MAX_AGE, RESOURCES, TRIBUTE, tributeReceived } from '@rune/shared/data/economy.js';
 import { MARKET, TRADABLE, buyCost, sellGain } from '@rune/shared/data/market.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
 import { CMD, GAME_EVENT, REJECT, UNIT_STATE, VICTORY_REASON } from '@rune/shared/protocol.js';
@@ -33,7 +33,7 @@ export function sanitizeCommand(raw) {
     if (!Number.isFinite(raw[key])) return null;
     cmd[key] = raw[key];
   }
-  for (const key of ['buildingId', 'tile', 'index', 'targetId']) {
+  for (const key of ['buildingId', 'tile', 'index', 'targetId', 'to', 'amount']) {
     if (raw[key] === undefined) continue;
     if (!Number.isInteger(raw[key])) return null;
     cmd[key] = raw[key];
@@ -96,6 +96,8 @@ function applyCommand(world, slot, cmd) {
       return board(world, slot, cmd);
     case CMD.TAKE_OATH:
       return takeOath(world, slot, cmd);
+    case CMD.SEND_RESOURCES:
+      return sendResources(world, slot, cmd);
     case CMD.SURRENDER:
       defeatPlayer(world, world.players[slot], VICTORY_REASON.SURRENDER);
       return null;
@@ -203,6 +205,28 @@ function takeOath(world, slot, { oath }) {
 
   player.oath = oath;
   world.events.push([GAME_EVENT.OATH_TAKEN, slot, OATH_IDS.indexOf(oath)]);
+  return null;
+}
+
+/**
+ * 팀원에게 자원을 보낸다. 운송 수수료를 떼고 도착한다 (docs/GAME_DESIGN.md 6장 팀전).
+ * 보내는 사람도 받는 사람도 아직 쓰러지지 않은 같은 팀이어야 한다.
+ */
+function sendResources(world, slot, { to, resource, amount }) {
+  if (!RESOURCES.includes(resource) || !Number.isInteger(amount) || amount <= 0 || amount > TRIBUTE.max) {
+    return REJECT.INVALID;
+  }
+  const sender = world.players[slot];
+  const receiver = world.players[to];
+  if (!receiver || to === slot || world.areEnemies(slot, to) || receiver.defeated || sender.defeated) {
+    return REJECT.INVALID_TARGET;
+  }
+  if (Math.floor(sender[resource]) < amount) return NOT_ENOUGH[resource];
+
+  const received = tributeReceived(amount);
+  sender[resource] -= amount;
+  receiver[resource] += received;
+  world.events.push([GAME_EVENT.RESOURCES_SENT, slot, to, RESOURCES.indexOf(resource), amount, received]);
   return null;
 }
 

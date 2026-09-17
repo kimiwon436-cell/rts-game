@@ -7,6 +7,7 @@ import { ABILITIES, ABILITY_IDS } from '@rune/shared/data/abilities.js';
 import {
   applyBuildingDelta,
   applyUnitDelta,
+  decodeAllies,
   decodeBuilding,
   decodeOwn,
   decodePlayer,
@@ -47,6 +48,7 @@ export class ClientWorld {
     this.buildings = new Map();
     this.mineAmounts = new Map(map.goldMines.map((m) => [m.id, m.amount]));
     this.me = null;
+    this.allies = new Map(); // 팀원 slot → { gold, wood, mana } (팀전)
     this.ages = new Map(); // slot → age
     this.publicPlayers = new Map(); // slot → { age, collapseSeconds, defeated }
     /** 전투 효과 (투사체·타격·쓰러짐). 렌더러가 시간이 지난 것을 지운다 */
@@ -88,6 +90,7 @@ export class ClientWorld {
     this.tick = snap.t;
     this.serverTick = snap.t;
     if (snap.me) this.me = decodePlayer(snap.me);
+    if (snap.allies) this.allies = decodeAllies(snap.allies);
     for (const raw of snap.players ?? []) {
       const info = decodePublicPlayer(raw);
       this.ages.set(info.slot, info.age);
@@ -170,6 +173,7 @@ export class ClientWorld {
     this.mineAmounts.clear();
     this.tiles.set(this.map.tiles); // 베였던 나무를 되살린다
     this.publicPlayers.clear();
+    this.allies = new Map();
     this.ages.clear();
     this.serverTick = -1;
     this.tick = -1;
