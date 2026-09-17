@@ -4,14 +4,14 @@ import { SHIELD_WALL } from '../data/units.js';
 
 /** 피해 배율표: 공격 유형 × 방어 유형 */
 export const DAMAGE_TABLE = Object.freeze({
-  normal: Object.freeze({ light: 1.0, heavy: 0.8, air: 1.0, building: 0.4, colossal: 0.6 }),
-  pierce: Object.freeze({ light: 1.25, heavy: 0.6, air: 2.0, building: 0.2, colossal: 0.5 }),
-  magic: Object.freeze({ light: 1.0, heavy: 1.5, air: 1.0, building: 0.5, colossal: 0.25 }),
-  siege: Object.freeze({ light: 0.6, heavy: 0.8, air: 0, building: 2.5, colossal: 2.0 }),
+  normal: Object.freeze({ light: 1.0, heavy: 0.8, air: 1.0, building: 0.4, colossal: 0.6, naval: 1.0 }),
+  pierce: Object.freeze({ light: 1.25, heavy: 0.6, air: 2.0, building: 0.2, colossal: 0.5, naval: 0.8 }),
+  magic: Object.freeze({ light: 1.0, heavy: 1.5, air: 1.0, building: 0.5, colossal: 0.25, naval: 1.25 }),
+  siege: Object.freeze({ light: 0.6, heavy: 0.8, air: 0, building: 2.5, colossal: 2.0, naval: 1.0 }),
 });
 
 export const ATTACK_TYPE_NAMES = Object.freeze({ normal: '일반', pierce: '관통', magic: '마법', siege: '공성' });
-export const ARMOR_NAMES = Object.freeze({ light: '경갑', heavy: '중갑', air: '비행', building: '건물', colossal: '거대' });
+export const ARMOR_NAMES = Object.freeze({ light: '경갑', heavy: '중갑', air: '비행', building: '건물', colossal: '거대', naval: '함선' });
 
 /** 사거리 1.5 이하는 근접 공격이다 */
 export const isMelee = (attack) => attack.range <= 1.5;
@@ -31,10 +31,11 @@ export const attackReach = (attack) => (isMelee(attack) ? MELEE_REACH : attack.r
  */
 export function computeDamage(attacker, target) {
   const { attack } = attacker;
+  if (!attack) return 0; // 수송선처럼 싸우지 않는 유닛
   const armor = target.building ? 'building' : target.def.armor;
   const multiplier = DAMAGE_TABLE[attack.type][armor];
   if (!multiplier) return 0;
-  if (armor === 'air' && isMelee(attack)) return 0; // 근접 공격은 하늘에 닿지 않는다
+  if ((armor === 'air' || armor === 'naval') && isMelee(attack)) return 0; // 근접 공격은 하늘과 물 위의 배에 닿지 않는다
 
   let bonus = 1;
   if (target.building) {

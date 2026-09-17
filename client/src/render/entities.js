@@ -168,6 +168,40 @@ const ART = {
     ctx.fillRect(px + 14, py + size - 8, size - 28, 3);
   },
 
+  shipyard(ctx, px, py, size, color) {
+    // 목조 부두 바닥
+    ctx.fillStyle = '#6b4e32';
+    ctx.fillRect(px + 3, py + 6, size - 6, size - 9);
+    ctx.fillStyle = 'rgba(40, 26, 12, 0.35)';
+    for (let k = 12; k < size - 4; k += 8) ctx.fillRect(px + 3, py + k, size - 6, 1);
+    // 창고
+    ctx.fillStyle = '#8a6a45';
+    ctx.fillRect(px + 8, py + 26, 42, 32);
+    ctx.fillStyle = '#5a3f28';
+    polygon(ctx, [[px + 3, py + 28], [px + 29, py + 8], [px + 55, py + 28]]);
+    ctx.fillStyle = '#2e2a25';
+    ctx.fillRect(px + 23, py + 42, 12, 16);
+    // 선대 위의 배 뼈대
+    ctx.strokeStyle = '#b58a5a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(px + 20, py + size - 16);
+    ctx.quadraticCurveTo(px + 44, py + size - 2, px + 74, py + size - 18);
+    ctx.stroke();
+    for (let i = 0; i < 4; i++) {
+      const rx = px + 28 + i * 11;
+      ctx.beginPath();
+      ctx.moveTo(rx, py + size - 12);
+      ctx.lineTo(rx - 3, py + size - 30);
+      ctx.stroke();
+    }
+    // 기중기
+    stroke(ctx, px + size - 16, py + size - 8, px + size - 16, py + 14, '#4a3520', 3);
+    stroke(ctx, px + size - 16, py + 14, px + size - 42, py + 22, '#4a3520', 2);
+    stroke(ctx, px + size - 40, py + 22, px + size - 40, py + 38, 'rgba(230, 220, 200, 0.7)', 1);
+    flag(ctx, px + 14, py - 6, color);
+  },
+
   watchtower(ctx, px, py, size, color) {
     ctx.fillStyle = '#7d766c';
     ctx.fillRect(px + 18, py + 10, 28, size - 18);
@@ -250,6 +284,84 @@ export function drawBuilding(ctx, b, color, t, age) {
 }
 
 // ---------- 유닛 ----------
+
+/**
+ * 배 몸통. 뱃머리가 f(1 오른쪽, -1 왼쪽) 쪽이고 물결에 조금 흔들린다. 움직이면 뒤로 물살 자국이 난다.
+ * @returns {number} 흔들림을 더한 갑판 높이 y
+ */
+function shipHull(ctx, u, x, y, f, len, beam, t, hullColor = '#6b4a2c') {
+  const yy = y + Math.sin(t / 420 + u.id) * 1.2;
+  if (u.state === UNIT_STATE.MOVE || u.state === UNIT_STATE.ATTACK) {
+    ctx.strokeStyle = 'rgba(225, 238, 255, 0.4)';
+    ctx.lineWidth = 1.5;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(x - f * len * 0.8, yy + beam * 0.25);
+      ctx.lineTo(x - f * len * 1.45, yy + beam * (0.25 + side * 0.4));
+      ctx.stroke();
+    }
+  }
+  ctx.fillStyle = 'rgba(8, 24, 40, 0.35)';
+  ellipse(ctx, x, yy + beam * 0.5, len * 1.05, beam * 0.42);
+  ctx.fillStyle = hullColor;
+  polygon(ctx, [
+    [x - f * len, yy - beam * 0.2],
+    [x + f * len * 0.72, yy - beam * 0.2],
+    [x + f * len * 1.05, yy - beam * 0.55],
+    [x + f * len * 0.78, yy + beam * 0.42],
+    [x - f * len * 0.86, yy + beam * 0.42],
+  ]);
+  ctx.fillStyle = 'rgba(255, 230, 190, 0.18)';
+  ctx.fillRect(x - len * 0.9, yy - beam * 0.2, len * 1.65, 3);
+  return yy;
+}
+
+const SHIP_ART = {
+  war_galley(ctx, u, color, t) {
+    const { x, y, f } = frameOf(u, t);
+    const deck = shipHull(ctx, u, x, y, f, 22, 16, t);
+    const stroke_ = Math.sin(t / 160 + u.id) * (u.state === UNIT_STATE.MOVE ? 4 : 1);
+    for (let i = -2; i <= 2; i++) {
+      stroke(ctx, x + i * 7, deck + 4, x + i * 7 - f * 3 + stroke_, deck + 12, '#a07a4e', 1.5); // 오어
+    }
+    stroke(ctx, x - f * 2, deck, x - f * 2, deck - 32, '#4a3520', 2.5); // 돛대
+    ctx.fillStyle = color;
+    polygon(ctx, [[x - f * 2 - 12, deck - 30], [x - f * 2 + 12, deck - 30], [x - f * 2 + 10, deck - 10], [x - f * 2 - 10, deck - 10]]);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+    ctx.fillRect(x - f * 2 - 11, deck - 22, 22, 3);
+  },
+
+  transport_ship(ctx, u, color, t) {
+    const { x, y, f } = frameOf(u, t);
+    const deck = shipHull(ctx, u, x, y, f, 20, 22, t, '#72532f');
+    ctx.fillStyle = '#9b7a4c'; // 짐칸
+    ctx.fillRect(x - 12, deck - 12, 16, 10);
+    ctx.fillStyle = '#86653e';
+    ctx.fillRect(x + 2, deck - 9, 9, 7);
+    ctx.strokeStyle = 'rgba(40, 26, 12, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - 12, deck - 12, 16, 10);
+    stroke(ctx, x + f * 8, deck - 2, x + f * 8, deck - 26, '#4a3520', 2);
+    ctx.fillStyle = color;
+    polygon(ctx, [[x + f * 8, deck - 25], [x + f * 20, deck - 14], [x + f * 8, deck - 10]]);
+  },
+
+  catapult_ship(ctx, u, color, t) {
+    const { x, y, f } = frameOf(u, t);
+    const deck = shipHull(ctx, u, x, y, f, 25, 19, t, '#5f4127');
+    ctx.fillStyle = '#4a3520'; // 투석기 틀
+    ctx.fillRect(x - 10, deck - 10, 20, 7);
+    // 쏜 직후에는 팔이 앞으로 넘어가 있다
+    const fired = u.state === UNIT_STATE.ATTACK && Math.sin(t / 300 + u.id) > 0.6;
+    const armX = fired ? x + f * 16 : x - f * 14;
+    const armY = fired ? deck - 26 : deck - 22;
+    stroke(ctx, x, deck - 8, armX, armY, '#a07a4e', 3);
+    ctx.fillStyle = '#6e6a62';
+    circle(ctx, armX, armY, 3.5);
+    ctx.fillStyle = color;
+    ctx.fillRect(x - f * 20 - 3, deck - 16, 6, 12); // 뒤 깃발
+  },
+};
 
 function drawPeasant(ctx, u, color, t) {
   const x = u.drawX * S;
@@ -536,7 +648,7 @@ const UNIT_ART = {
 export function drawUnit(ctx, u, color, t) {
   if (u.carried) return; // 등에 탄 유닛은 태운 쪽 위에 겹쳐 그리지 않는다
   if (u.buffed) drawAuraMark(ctx, u);
-  (UNIT_ART[u.type] ?? drawPeasant)(ctx, u, color, t);
+  (UNIT_ART[u.type] ?? SHIP_ART[u.type] ?? drawPeasant)(ctx, u, color, t);
   drawUnitStatus(ctx, u, t);
 }
 
@@ -617,6 +729,24 @@ export function drawEffect(ctx, effect, now) {
     const y = (effect.from.y + (effect.to.y - effect.from.y) * t) * S - Math.sin(Math.PI * t) * 14;
     const angle = Math.atan2(effect.to.y - effect.from.y, effect.to.x - effect.from.x);
     stroke(ctx, x - Math.cos(angle) * 6, y - Math.sin(angle) * 6, x + Math.cos(angle) * 5, y + Math.sin(angle) * 5, '#efe3c6', 1.5);
+    return true;
+  }
+
+  if (effect.kind === 'stone') {
+    // 투석: 높이 포물선을 그리며 날아가 떨어진 자리에 흙먼지
+    if (t < 1) {
+      const x = (effect.from.x + (effect.to.x - effect.from.x) * t) * S;
+      const y = (effect.from.y + (effect.to.y - effect.from.y) * t) * S - Math.sin(Math.PI * t) * 42;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+      ellipse(ctx, (effect.from.x + (effect.to.x - effect.from.x) * t) * S, (effect.from.y + (effect.to.y - effect.from.y) * t) * S + 4, 4, 2);
+      ctx.fillStyle = '#77716a';
+      circle(ctx, x, y, 4.5);
+      return true;
+    }
+    if (t >= 1.5) return false;
+    const k = (t - 1) / 0.5;
+    ctx.fillStyle = `rgba(150, 128, 96, ${0.55 * (1 - k)})`;
+    circle(ctx, effect.to.x * S, effect.to.y * S, 6 + Math.max(0.5, effect.splash) * S * k);
     return true;
   }
 

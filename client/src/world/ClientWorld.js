@@ -233,7 +233,7 @@ export class ClientWorld {
       const from = centerOf(attacker);
       const distance = Math.hypot(to.x - from.x, to.y - from.y);
       this.effects.push({
-        kind: attack.type === 'magic' ? 'bolt' : 'arrow',
+        kind: attack.type === 'magic' ? 'bolt' : attack.type === 'siege' ? 'stone' : 'arrow',
         from,
         to,
         splash: attack.splash ?? 0,

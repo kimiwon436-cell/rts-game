@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadMap } from '@rune/shared/map/maps/index.js';
-import { ABILITIES, GARRISON } from '@rune/shared/data/abilities.js';
+import { ABILITIES } from '@rune/shared/data/abilities.js';
+import { UNITS } from '@rune/shared/data/units.js';
 import { CMD, REJECT, GAME_EVENT } from '@rune/shared/protocol.js';
 import { World } from '../src/game/World.js';
 import { TICK_SECONDS, stepWorld } from '../src/game/Simulation.js';
@@ -226,8 +227,8 @@ test('등 위의 성채: 6기까지 태우고, 탄 유닛은 맞지 않으며 �
   assert.equal(command(world, 0, { type: CMD.BOARD, unitIds: riders.map((u) => u.id), targetId: arkanon.id }), null);
   runSeconds(world, 3);
 
-  assert.equal(arkanon.garrison.length, GARRISON.capacity, '정원은 6기');
-  assert.equal(arkanon.extra, GARRISON.capacity, '스냅샷에 탑승 인원이 실린다');
+  assert.equal(arkanon.garrison.length, UNITS.arkanon.garrison.capacity, '정원은 6기');
+  assert.equal(arkanon.extra, UNITS.arkanon.garrison.capacity, '스냅샷에 탑승 인원이 실린다');
   const [aboard] = arkanon.garrison.map((id) => world.units.get(id));
   assert.equal(aboard.carrierId, arkanon.id);
   assert.equal(aboard.x, arkanon.x, '등 위에서는 태운 쪽을 따라다닌다');

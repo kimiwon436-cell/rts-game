@@ -1,5 +1,9 @@
 import { BUILDINGS } from '../data/buildings.js';
 import { isBuildableTerrain } from '../map/grid.js';
+import { seaWater } from '../map/water.js';
+
+/** 조선소처럼 물가에 짓는 건물은 둘레(모서리 제외)에서 바다와 이어진 물 칸이 이만큼 있어야 한다 */
+export const COAST_MIN_TILES = 2;
 
 export const PLACE = Object.freeze({
   OK: 'OK',
@@ -8,6 +12,7 @@ export const PLACE = Object.freeze({
   NEEDS_WELL: 'NEEDS_WELL',
   WELL_TAKEN: 'WELL_TAKEN',
   ON_WELL: 'ON_WELL',
+  NEEDS_COAST: 'NEEDS_COAST',
 });
 
 export const rectsOverlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -47,5 +52,16 @@ export function checkPlacement({ type, x, y, map, tiles, occupied, isWellTaken }
       if (!isBuildableTerrain(tiles[i]) || occupied[i]) return PLACE.BLOCKED; // 물·다리·숲·바위
     }
   }
+  if (def.coastal && coastTiles(map, rect) < COAST_MIN_TILES) return PLACE.NEEDS_COAST;
   return PLACE.OK;
+}
+
+/** 사각형 둘레(모서리 제외)에서 바다와 이어진 물 칸 수 */
+export function coastTiles(map, { x, y, w, h }) {
+  const sea = seaWater(map);
+  const at = (tx, ty) => (tx >= 0 && ty >= 0 && tx < map.width && ty < map.height ? sea[ty * map.width + tx] : 0);
+  let count = 0;
+  for (let t = 0; t < w; t++) count += at(x + t, y - 1) + at(x + t, y + h);
+  for (let t = 0; t < h; t++) count += at(x - 1, y + t) + at(x + w, y + t);
+  return count;
 }

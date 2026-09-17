@@ -1,4 +1,4 @@
-import { UNITS } from '@rune/shared/data/units.js';
+import { UNITS, isNaval } from '@rune/shared/data/units.js';
 import { BUILDINGS, BUILD_MENU, PRODUCTION_QUEUE_MAX } from '@rune/shared/data/buildings.js';
 import { ABILITIES } from '@rune/shared/data/abilities.js';
 import { OATHS, OATH_IDS } from '@rune/shared/data/oaths.js';
@@ -116,27 +116,40 @@ function pay(player, cost) {
   for (const resource of RESOURCES) player[resource] -= cost[resource] ?? 0;
 }
 
-/** 이동과 공격 이동. 공격 이동은 가는 길에 만난 적과 싸우고(combat.js) 다시 목적지로 간다. */
+/** 배가 뭍을 찍었을 때 가장 가까운 물을 찾는 거리 (맵 한쪽 끝까지) */
+const NAVAL_TARGET_SEARCH = 48;
+
+/**
+ * 이동과 공격 이동. 공격 이동은 가는 길에 만난 적과 싸우고(combat.js) 다시 목적지로 간다.
+ * 배와 뭍 유닛은 다니는 곳이 달라 따로 자리를 잡는다: 배는 찍은 곳에서 가장 가까운 물로, 뭍 유닛은 가장 가까운 뭍으로.
+ */
 function move(world, slot, { unitIds, x, y }, attacking = false) {
   const units = ownUnits(world, slot, unitIds);
   if (!units.length || !world.nav.inside(Math.floor(x), Math.floor(y))) return REJECT.INVALID_TARGET;
-  const slots = world.destinationSlots(x, y, units.length);
-  if (!slots.length) return REJECT.INVALID_TARGET;
 
-  // 한 기만 보낼 때는 누른 지점 그대로, 무리는 서로 다른 칸의 중심으로
-  const exact = units.length === 1 && !world.nav.isBlocked(Math.floor(x), Math.floor(y));
-  for (const [unit, [sx, sy]] of assignSlots(units, slots, x, y)) {
-    const goal = {
-      rect: { x: sx, y: sy, w: 1, h: 1 },
-      adjacent: false,
-      point: exact ? { x, y } : { x: sx + 0.5, y: sy + 0.5 },
-    };
-    world.stopUnit(unit);
-    unit.order = attacking ? { type: 'attackMove', goal } : { type: 'move' };
-    unit.state = UNIT_STATE.MOVE;
-    world.requestPath(unit, goal);
+  let moved = false;
+  for (const group of [units.filter((u) => !isNaval(u.type)), units.filter((u) => isNaval(u.type))]) {
+    if (!group.length) continue;
+    const nav = world.navOf(group[0]);
+    const slots = world.destinationSlots(x, y, group.length, nav, nav === world.waterNav ? NAVAL_TARGET_SEARCH : 12);
+    if (!slots.length) continue;
+
+    // 한 기만 보낼 때는 누른 지점 그대로, 무리는 서로 다른 칸의 중심으로
+    const exact = group.length === 1 && !nav.isBlocked(Math.floor(x), Math.floor(y));
+    for (const [unit, [sx, sy]] of assignSlots(group, slots, x, y)) {
+      const goal = {
+        rect: { x: sx, y: sy, w: 1, h: 1 },
+        adjacent: false,
+        point: exact ? { x, y } : { x: sx + 0.5, y: sy + 0.5 },
+      };
+      world.stopUnit(unit);
+      unit.order = attacking ? { type: 'attackMove', goal } : { type: 'move' };
+      unit.state = UNIT_STATE.MOVE;
+      world.requestPath(unit, goal);
+    }
+    moved = true;
   }
-  return null;
+  return moved ? null : REJECT.INVALID_TARGET;
 }
 
 function attack(world, slot, { unitIds, targetId }) {
@@ -188,10 +201,10 @@ function castAbility(world, slot, { unitIds, ability, x, y }) {
   return used ? null : reason;
 }
 
-/** 아르카논 등에 태우기 */
+/** 아르카논 등이나 수송선에 태우기 */
 function board(world, slot, { unitIds, targetId }) {
   const carrier = world.units.get(targetId);
-  if (!carrier || carrier.owner !== slot) return REJECT.INVALID_TARGET;
+  if (!carrier || carrier.owner !== slot || carrier.carrierId) return REJECT.INVALID_TARGET;
   const units = ownUnits(world, slot, unitIds);
   if (!units.length) return REJECT.INVALID_TARGET;
   return orderBoard(world, units, carrier);

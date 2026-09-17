@@ -307,7 +307,8 @@ export class Renderer {
       ctx.lineTo(px + size, py + i * S);
       ctx.stroke();
     }
-    drawLabel(ctx, BUILDINGS[g.type].name, px + size / 2, py - 6, g.valid ? '#62c27f' : '#e0574c');
+    const label = !g.valid && g.reason === 'NEEDS_COAST' ? `${BUILDINGS[g.type].name} — 물가에` : BUILDINGS[g.type].name;
+    drawLabel(ctx, label, px + size / 2, py - 6, g.valid ? '#62c27f' : '#e0574c');
   }
 
   drawMarkers(ctx, timeMs) {

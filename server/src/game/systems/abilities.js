@@ -1,6 +1,7 @@
 import { TICK_MS } from '@rune/shared/constants.js';
 import { UNITS } from '@rune/shared/data/units.js';
 import { ABILITIES, ABILITY_IDS, GARRISON } from '@rune/shared/data/abilities.js';
+import { canBoard, garrisonOf } from '@rune/shared/rules/garrison.js';
 import { RESOURCES } from '@rune/shared/data/economy.js';
 import { GAME_EVENT, REJECT, UNIT_STATE } from '@rune/shared/protocol.js';
 import { POS_SCALE } from '@rune/shared/snapshot.js';
@@ -8,6 +9,9 @@ import { computeDamage } from '@rune/shared/rules/combat.js';
 import { revealAttacker } from './vision.js';
 
 export const toTicks = (seconds) => Math.max(1, Math.round((seconds * 1000) / TICK_MS));
+
+/** 태우러 가던 유닛이 닿지 못했을 때 길을 다시 찾기까지 (배가 물가에 댈 때까지 기다리는 동안 A*를 틱마다 돌리지 않게) */
+const BOARD_RETRY_TICKS = 20;
 
 /** 능력 사용 효과 이벤트: 0 = 시작(영창), 1 = 발동, 2 = 취소 */
 export const PHASE = Object.freeze({ START: 0, DONE: 1, CANCEL: 2 });
@@ -141,7 +145,7 @@ function updateChannels(world) {
   }
 }
 
-// ---------- 등 위의 성채 ----------
+// ---------- 등 위의 성채 · 수송선 ----------
 
 function updateBoarding(world) {
   for (const carrier of world.units.values()) {
@@ -150,7 +154,8 @@ function updateBoarding(world) {
   for (const unit of world.units.values()) {
     if (unit.order?.type !== 'board' || unit.carrierId) continue;
     const carrier = world.units.get(unit.order.targetId);
-    if (!carrier || carrier.owner !== unit.owner || carrier.garrison.length >= GARRISON.capacity) {
+    const garrison = carrier ? garrisonOf(carrier.type) : null;
+    if (!carrier || !garrison || carrier.owner !== unit.owner || carrier.garrison.length >= garrison.capacity) {
       world.stopUnit(unit);
       continue;
     }
@@ -158,13 +163,19 @@ function updateBoarding(world) {
       world.boardUnit(carrier, unit);
       continue;
     }
-    if (!unit.path && !unit.pathPending) {
+    if (unit.path || unit.pathPending || world.tick < (unit.order.retryTick ?? 0)) continue;
+    unit.order.retryTick = world.tick + BOARD_RETRY_TICKS;
+    unit.state = UNIT_STATE.MOVE;
+    if (UNITS[carrier.type].naval) {
+      // 배에는 물가에서 탄다: 배에서 가장 가까운 뭍으로 가서 배가 대기를 기다린다
+      const spot = world.nearestFreeTile(carrier.x, carrier.y, 12);
+      if (spot) world.requestPath(unit, { rect: { x: spot[0], y: spot[1], w: 1, h: 1 }, adjacent: false, point: null });
+    } else {
       world.requestPath(unit, {
         rect: { x: Math.floor(carrier.x), y: Math.floor(carrier.y), w: 1, h: 1 },
         adjacent: true,
         point: null,
       });
-      unit.state = UNIT_STATE.MOVE;
     }
   }
 }
@@ -272,6 +283,7 @@ export function useAbility(world, unit, abilityId, point) {
       break;
     case 'unload':
       if (!unit.garrison.length) return REJECT.INVALID_TARGET;
+      if (UNITS[unit.type].naval && !world.landingSpot(unit)) return REJECT.NO_LANDING; // 뭍에 대야 내린다
       world.unloadAll(unit);
       pushEffect(world, unit, abilityId, unit.x, unit.y, PHASE.DONE);
       break;
@@ -302,7 +314,7 @@ function dawnCharge(world, unit, ability, point) {
   const end = { x: start.x + dirX * travelled, y: start.y + dirY * travelled };
 
   for (const target of world.units.values()) {
-    if (!world.areEnemies(target.owner, unit.owner)) continue;
+    if (!world.areEnemies(target.owner, unit.owner) || UNITS[target.type].naval) continue; // 물 위의 배에는 닿지 않는다
     if (distanceToSegment(target, start, end) > ability.halfWidth + UNITS[target.type].radius) continue;
     abilityHit(world, unit, target, ability.damage, ability.damageType);
     target.stunUntil = Math.max(target.stunUntil, world.tick + toTicks(ability.stun));
@@ -354,12 +366,13 @@ export function toggleUnitAbility(world, unit, abilityId, enable) {
   return null;
 }
 
-/** 등에 태우러 보낸다. 닿으면 updateBoarding이 태운다. */
+/** 태우러 보낸다 (아르카논 등·수송선). 닿으면 updateBoarding이 태운다. */
 export function orderBoard(world, units, carrier) {
-  if (!UNITS[carrier.type].garrison) return REJECT.CANNOT_BOARD;
-  const riders = units.filter((unit) => GARRISON.allow.includes(unit.type) && unit.id !== carrier.id);
+  const garrison = garrisonOf(carrier.type);
+  if (!garrison) return REJECT.CANNOT_BOARD;
+  const riders = units.filter((unit) => unit.id !== carrier.id && canBoard(carrier.type, unit.type));
   if (!riders.length) return REJECT.CANNOT_BOARD;
-  if (carrier.garrison.length >= GARRISON.capacity) return REJECT.GARRISON_FULL;
+  if (carrier.garrison.length >= garrison.capacity) return REJECT.GARRISON_FULL;
 
   for (const unit of riders) {
     world.stopUnit(unit);

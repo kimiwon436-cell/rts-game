@@ -1,9 +1,9 @@
 import { UNITS } from '@rune/shared/data/units.js';
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
-import { ABILITIES } from '@rune/shared/data/abilities.js';
+import { ABILITIES, GARRISON } from '@rune/shared/data/abilities.js';
 import { POP_LIMIT, STARTING_RESOURCES, STARTING_WORKERS, WOOD_PER_TREE } from '@rune/shared/data/economy.js';
 import { MARKET } from '@rune/shared/data/market.js';
-import { TERRAIN } from '@rune/shared/map/grid.js';
+import { TERRAIN, isNavigableWater } from '@rune/shared/map/grid.js';
 import { VisionGrid } from '@rune/shared/rules/vision.js';
 import { GAME_EVENT, UNIT_STATE } from '@rune/shared/protocol.js';
 import { NavGrid } from './pathfinding/NavGrid.js';
@@ -60,6 +60,9 @@ export class World {
     }
     this.nav = new NavGrid(this.width, this.height, this.tiles);
     this.pathfinder = new Pathfinder(this.nav);
+    /** 배가 다니는 물길 (물과 다리 밑). 경기 중에 바뀌지 않는다 */
+    this.waterNav = new NavGrid(this.width, this.height, this.tiles, (t) => !isNavigableWater(t));
+    this.waterPathfinder = new Pathfinder(this.waterNav);
     /** 건물·건설 부지·금광이 차지한 칸 (배치 판정용) */
     this.occupied = new Uint8Array(this.tiles.length);
 
@@ -252,16 +255,23 @@ export class World {
   moveUnit(unit, rect, adjacent, point = null) {
     const sx = clamp(Math.floor(unit.x), 0, this.width - 1);
     const sy = clamp(Math.floor(unit.y), 0, this.height - 1);
-    const { tiles, reached } = this.pathfinder.find(sx, sy, rect, adjacent);
-    const waypoints = toWaypoints(this.nav, unit.x, unit.y, tiles, UNITS[unit.type].radius);
+    const nav = this.navOf(unit);
+    const pathfinder = nav === this.waterNav ? this.waterPathfinder : this.pathfinder;
+    const { tiles, reached } = pathfinder.find(sx, sy, rect, adjacent);
+    const waypoints = toWaypoints(nav, unit.x, unit.y, tiles, UNITS[unit.type].radius);
     if (point && reached) {
       if (waypoints.length) waypoints[waypoints.length - 1] = [point.x, point.y];
       else waypoints.push([point.x, point.y]);
     }
     unit.path = waypoints.length ? waypoints : null;
     unit.goal = { rect, adjacent, point };
-    unit.navVersion = this.nav.version;
+    unit.navVersion = nav.version;
     return reached;
+  }
+
+  /** 유닛이 다니는 격자: 배는 물길, 나머지는 뭍 */
+  navOf(unit) {
+    return UNITS[unit.type].naval ? this.waterNav : this.nav;
   }
 
   stopUnit(unit) {
@@ -305,26 +315,28 @@ export class World {
 
   /** 건물 둘레의 빈 칸에 유닛을 만든다. toward(집결지나 맵 중앙)에 가까운 칸을 고른다. */
   spawnUnitNear(type, owner, building, toward) {
+    const nav = UNITS[type].naval ? this.waterNav : this.nav; // 배는 조선소 옆 물에서 나온다
     for (let r = 1; r <= 4; r++) {
       const ring = { x: building.x - r + 1, y: building.y - r + 1, w: building.w + 2 * (r - 1), h: building.h + 2 * (r - 1) };
-      const spots = this.ringTiles(ring).filter(([tx, ty]) => !this.nav.isBlocked(tx, ty));
+      const spots = this.ringTiles(ring).filter(([tx, ty]) => !nav.isBlocked(tx, ty));
       if (!spots.length) continue;
       const distance = ([tx, ty]) => Math.hypot(tx + 0.5 - toward.x, ty + 0.5 - toward.y);
       spots.sort((a, b) => distance(a) - distance(b));
       return this.spawnUnit(type, owner, spots[0][0] + 0.5, spots[0][1] + 0.5);
     }
-    const spot = this.nearestFreeTile(building.x + building.w / 2, building.y + building.h + 0.5) ?? [building.x, building.y];
+    const spot = this.nearestFreeTile(building.x + building.w / 2, building.y + building.h + 0.5, 12, nav) ?? [building.x, building.y];
     return this.spawnUnit(type, owner, spot[0] + 0.5, spot[1] + 0.5);
   }
 
   /**
-   * 무리 이동의 목적지 칸들: 목표에서 걸어서 이어진 빈 칸을 가까운 순서로 count개.
+   * 무리 이동의 목적지 칸들: 목표에서 걸어서(배는 물길로) 이어진 빈 칸을 가까운 순서로 count개.
    * 목표 칸에서 퍼져 나가며(BFS) 모으므로 벽 너머 칸은 뽑히지 않는다.
+   * 목표 칸이 막혀 있으면(배에게 뭍, 뭍 유닛에게 물) searchRadius 안의 가장 가까운 빈 칸에서 시작한다.
    */
-  destinationSlots(x, y, count) {
+  destinationSlots(x, y, count, nav = this.nav, searchRadius = 12) {
     let start = [Math.floor(x), Math.floor(y)];
-    if (this.nav.isBlocked(start[0], start[1])) {
-      start = this.nearestFreeTile(x, y);
+    if (nav.isBlocked(start[0], start[1])) {
+      start = this.nearestFreeTile(x, y, searchRadius, nav);
       if (!start) return [];
     }
     const wanted = Math.min(count * 2 + 8, 400);
@@ -337,8 +349,8 @@ export class World {
       for (const [dx, dy] of NEIGHBORS_8) {
         const nx = tx + dx;
         const ny = ty + dy;
-        if (this.nav.isBlocked(nx, ny)) continue;
-        if (dx && dy && (this.nav.isBlocked(nx, ty) || this.nav.isBlocked(tx, ny))) continue;
+        if (nav.isBlocked(nx, ny)) continue;
+        if (dx && dy && (nav.isBlocked(nx, ty) || nav.isBlocked(tx, ny))) continue;
         const i = ny * this.width + nx;
         if (seen.has(i)) continue;
         seen.add(i);
@@ -362,20 +374,33 @@ export class World {
     carrier.garrison.push(unit.id);
   }
 
-  /** 등에 탄 유닛을 모두 내린다. 태운 쪽 둘레의 서로 다른 빈 칸에 놓는다. */
+  /**
+   * 태운 유닛을 모두 내린다. 태운 쪽 둘레의 서로 다른 빈 칸에 놓는다.
+   * 배면 가장 가까운 뭍부터 채운다 (내리기 전에 landingSpot으로 뭍이 가까운지 확인한다).
+   */
   unloadAll(carrier) {
     const ids = carrier.garrison.filter((id) => this.units.has(id));
     carrier.garrison = [];
-    const spots = this.destinationSlots(carrier.x, carrier.y, ids.length + 1);
+    const naval = UNITS[carrier.type].naval;
+    const spots = this.destinationSlots(carrier.x, carrier.y, ids.length + (naval ? 0 : 1));
+    const skip = naval ? 0 : 1; // 아르카논은 제가 선 칸을 비워 둔다
     ids.forEach((id, i) => {
       const unit = this.units.get(id);
-      const spot = spots[i + 1] ?? spots[0] ?? [Math.floor(carrier.x), Math.floor(carrier.y)];
+      const spot = spots[i + skip] ?? spots[0] ?? [Math.floor(carrier.x), Math.floor(carrier.y)];
       unit.carrierId = null;
       unit.x = spot[0] + 0.5;
       unit.y = spot[1] + 0.5;
       unit.navVersion = -1;
     });
     return ids.length;
+  }
+
+  /** 배에서 내릴 뭍: 배 둘레 GARRISON.landingRange 안의 걸을 수 있는 칸. 없으면 null */
+  landingSpot(carrier) {
+    const spot = this.nearestFreeTile(carrier.x, carrier.y, 4);
+    if (!spot) return null;
+    const reach = GARRISON.landingRange + UNITS[carrier.type].radius;
+    return Math.hypot(spot[0] + 0.5 - carrier.x, spot[1] + 0.5 - carrier.y) <= reach ? spot : null;
   }
 
   /** 등에 탄 유닛은 태운 쪽을 따라다닌다 */
@@ -391,7 +416,7 @@ export class World {
   /** 사각형 안에 걸친 유닛을 가장 가까운 빈 칸으로 옮긴다 */
   ejectUnits(rect) {
     for (const unit of this.units.values()) {
-      if (unit.carrierId) continue;
+      if (unit.carrierId || UNITS[unit.type].naval) continue; // 배는 물 위에 있어 건물 자리와 겹치지 않는다
       if (distanceToRect(unit.x, unit.y, rect) >= UNITS[unit.type].radius) continue;
       const spot = this.nearestFreeTile(unit.x, unit.y);
       if (!spot) continue;
@@ -401,7 +426,8 @@ export class World {
     }
   }
 
-  nearestFreeTile(x, y, maxRadius = 12) {
+  /** (x, y)에서 가장 가까운 빈 칸 (nav 격자 기준 — 배에게는 물, 걷는 유닛에게는 뭍) */
+  nearestFreeTile(x, y, maxRadius = 12, nav = this.nav) {
     const ox = Math.floor(x);
     const oy = Math.floor(y);
     for (let r = 0; r <= maxRadius; r++) {
@@ -409,7 +435,7 @@ export class World {
       let bestDistance = Infinity;
       for (let ty = oy - r; ty <= oy + r; ty++) {
         for (let tx = ox - r; tx <= ox + r; tx++) {
-          if (Math.max(Math.abs(tx - ox), Math.abs(ty - oy)) !== r || this.nav.isBlocked(tx, ty)) continue;
+          if (Math.max(Math.abs(tx - ox), Math.abs(ty - oy)) !== r || nav.isBlocked(tx, ty)) continue;
           const d = Math.hypot(tx + 0.5 - x, ty + 0.5 - y);
           if (d < bestDistance) {
             bestDistance = d;

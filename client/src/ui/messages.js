@@ -48,8 +48,11 @@ const MESSAGES = {
   [REJECT.ULTIMATE_EXISTS]: '궁극 유닛은 한 경기에 한 기만 존재합니다.',
   [REJECT.ON_COOLDOWN]: '아직 다시 쓸 수 없습니다.',
   [REJECT.OUT_OF_RANGE]: '너무 멉니다.',
-  [REJECT.GARRISON_FULL]: '등에 더 태울 수 없습니다.',
-  [REJECT.CANNOT_BOARD]: '창병·장궁병·왕실 근위병·전투 마법사만 등에 탈 수 있습니다.',
+  [REJECT.GARRISON_FULL]: '더 태울 수 없습니다.',
+  [REJECT.CANNOT_BOARD]: '그 유닛은 탈 수 없습니다. 아르카논 등에는 창병·장궁병·왕실 근위병·전투 마법사, 수송선에는 궁극 유닛이 아닌 뭍 유닛이 탑니다.',
+  // 해군
+  [REJECT.NO_LANDING]: '뭍에 더 가까이 대야 내릴 수 있습니다.',
+  [REJECT.NEEDS_COAST]: '조선소는 바다와 이어진 물가에 지어야 합니다.',
 };
 
 export const errorMessage = (code) => MESSAGES[code] ?? `알 수 없는 오류입니다 (${code})`;
