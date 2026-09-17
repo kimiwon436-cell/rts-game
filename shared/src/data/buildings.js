@@ -1,5 +1,6 @@
 // 건물 능력치 — docs/GAME_DESIGN.md 5장 (기본 9종 + 왕국 시대 맹세의 성소)
 // size: 정사각형 풋프린트 한 변의 타일 수, pop: 완성 시 늘어나는 인구 상한
+// sight: 완성된 건물의 시야 (풋프린트 중심에서 잰 타일 수, 짓는 중에는 FOUNDATION_SIGHT)
 
 export const BUILDINGS = Object.freeze({
   keep: {
@@ -10,6 +11,7 @@ export const BUILDINGS = Object.freeze({
     cost: { gold: 400, wood: 400, mana: 0 },
     buildTime: 90,
     hp: 2400,
+    sight: 10,
     pop: 10,
     dropoff: ['gold', 'wood'],
     trains: ['peasant'],
@@ -23,6 +25,7 @@ export const BUILDINGS = Object.freeze({
     cost: { gold: 0, wood: 60, mana: 0 },
     buildTime: 20,
     hp: 400,
+    sight: 5,
     pop: 8,
     hotkey: 'Q',
   },
@@ -34,6 +37,7 @@ export const BUILDINGS = Object.freeze({
     cost: { gold: 0, wood: 100, mana: 0 },
     buildTime: 25,
     hp: 600,
+    sight: 6,
     dropoff: ['gold', 'wood'],
     hotkey: 'W',
   },
@@ -45,6 +49,7 @@ export const BUILDINGS = Object.freeze({
     cost: { gold: 50, wood: 150, mana: 0 },
     buildTime: 40,
     hp: 1000,
+    sight: 7,
     trains: ['pikeman', 'longbowman', 'royal_guard'],
     hotkey: 'E',
   },
@@ -56,6 +61,7 @@ export const BUILDINGS = Object.freeze({
     cost: { gold: 100, wood: 200, mana: 0 },
     buildTime: 45,
     hp: 1100,
+    sight: 7,
     trains: ['scout_rider', 'knight'],
     hotkey: 'R',
   },
@@ -67,6 +73,7 @@ export const BUILDINGS = Object.freeze({
     cost: { gold: 50, wood: 150, mana: 0 },
     buildTime: 30,
     hp: 500,
+    sight: 6,
     onWell: true,
     hotkey: 'A',
   },
@@ -78,6 +85,7 @@ export const BUILDINGS = Object.freeze({
     cost: { gold: 100, wood: 100, mana: 0 },
     buildTime: 35,
     hp: 700,
+    sight: 11,
     attack: { damage: 14, type: 'pierce', range: 7, cooldown: 1.5 },
     hotkey: 'S',
   },
@@ -89,6 +97,7 @@ export const BUILDINGS = Object.freeze({
     cost: { gold: 150, wood: 150, mana: 50 },
     buildTime: 50,
     hp: 900,
+    sight: 8,
     trains: ['battlemage'],
     hotkey: 'Z',
   },
@@ -100,6 +109,7 @@ export const BUILDINGS = Object.freeze({
     cost: { gold: 50, wood: 250, mana: 0 },
     buildTime: 45,
     hp: 1000,
+    sight: 7,
     market: true,
     hotkey: 'X',
   },
@@ -111,6 +121,7 @@ export const BUILDINGS = Object.freeze({
     cost: { gold: 300, wood: 300, mana: 300 },
     buildTime: 80,
     hp: 2000,
+    sight: 8,
     trains: ['solarion', 'etheria', 'arkanon'], // 맺은 맹세의 유닛만 뽑을 수 있다
     oathAltar: true,
     hotkey: 'C',

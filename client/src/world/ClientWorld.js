@@ -4,6 +4,7 @@ import { UNITS } from '@rune/shared/data/units.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
 import { GAME_EVENT } from '@rune/shared/protocol.js';
 import { ABILITIES, ABILITY_IDS } from '@rune/shared/data/abilities.js';
+import { REVEAL_SIGHT, VisionGrid, sightOf } from '@rune/shared/rules/vision.js';
 import {
   applyBuildingDelta,
   applyUnitDelta,
@@ -70,6 +71,8 @@ export class ClientWorld {
     this.quiet = false;
     /** @type {(event: Array) => void} */
     this.onEvent = null;
+    /** 전장의 안개 그림용 시야 (서버와 같은 규칙으로 우리 팀 것만 센다) */
+    this.vision = new VisionGrid(map.width, map.height, { explored: true });
   }
 
   get ready() {
@@ -83,7 +86,7 @@ export class ClientWorld {
    */
   applySnapshot(snap) {
     if (snap.full) {
-      this.reset();
+      this.reset({ keepExplored: true }); // 재접속해도 한 번 본 땅은 기억한다
       for (const tile of snap.felled ?? []) this.tiles[tile] = TERRAIN.GRASS;
       if (snap.felled?.length) this.onTerrainReset?.();
     }
@@ -167,7 +170,7 @@ export class ClientWorld {
   }
 
   /** 전체 스냅샷을 받기 전에 지난 상태를 비운다 (재접속·리플레이 되감기) */
-  reset() {
+  reset({ keepExplored = false } = {}) {
     this.units.clear();
     this.buildings.clear();
     this.mineAmounts.clear();
@@ -183,6 +186,28 @@ export class ClientWorld {
     this.effects.length = 0;
     this.renderTick = -1;
     this.occupancyDirty = true;
+    this.vision.clear({ keepExplored });
+  }
+
+  /**
+   * 우리 팀의 시야를 지금 그리는 위치로 갱신한다 (안개 그림용).
+   * 서버가 보낸 적 유닛은 우리 팀에게 보이는 것이니 그 자리도 조금 밝힌다
+   * (우리 시야 밖에서 쏘다 드러난 적이 어둠 속에 묻혀 보이지 않게).
+   */
+  updateVision() {
+    const team = this.teamOf(this.mySlot);
+    const { vision } = this;
+    vision.begin();
+    for (const unit of this.units.values()) {
+      if (unit.carried) continue;
+      const radius = this.teamOf(unit.owner) === team ? sightOf(unit.type) : REVEAL_SIGHT;
+      vision.place(unit.id, team, unit.drawX, unit.drawY, radius);
+    }
+    for (const b of this.buildings.values()) {
+      if (this.teamOf(b.owner) !== team) continue;
+      vision.place(b.id, team, b.x + b.size / 2, b.y + b.size / 2, sightOf(b.type, b.complete));
+    }
+    vision.end();
   }
 
   /** 보간에 쓸 위치 표본. 움직인 틱에만 쌓인다 */

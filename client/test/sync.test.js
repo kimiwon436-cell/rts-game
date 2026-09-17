@@ -17,7 +17,7 @@ const MY_SLOT = 0;
 function setup() {
   const map = loadMap('duel01');
   const world = new World(map, PLAYERS);
-  const feed = new SnapshotFeed();
+  const feed = new SnapshotFeed(world);
   const client = new ClientWorld(loadMap('duel01'), MY_SLOT);
   return { map, world, feed, client };
 }
@@ -25,16 +25,23 @@ function setup() {
 /** 한 틱 진행하고 그 틱의 개인화된 델타를 클라이언트에 적용한다 */
 function tick(world, feed, client, commands = []) {
   const { events } = stepWorld(world, commands);
-  const snap = feed.personalize(feed.buildDelta(world, events), world, MY_SLOT);
+  feed.update(world, events);
+  const snap = feed.snapshotFor(world, MY_SLOT);
   client.applySnapshot(snap);
   return snap;
 }
 
 const sortById = (a, b) => (a.id < b.id ? -1 : 1);
 
+/** 전장의 안개: 클라이언트는 우리 팀 것과 보이는 적만 안다 */
+const visibleUnits = (world) => [...world.units.values()].filter((u) => world.isVisibleTo(world.teamOf(MY_SLOT), u));
+const visibleBuildings = (world) => [...world.buildings.values()].filter((b) => world.isVisibleTo(world.teamOf(MY_SLOT), b));
+
 function assertSameState(world, client) {
-  assert.equal(client.units.size, world.units.size);
-  for (const unit of world.units.values()) {
+  const units = visibleUnits(world);
+  assert.ok(units.length < world.units.size, '상대 본진은 안개 속이라 오지 않는다');
+  assert.equal(client.units.size, units.length);
+  for (const unit of units) {
     const mirror = client.units.get(unit.id);
     assert.ok(mirror, `유닛 ${unit.id}이(가) 클라이언트에 없다`);
     assert.equal(mirror.type, unit.type);
@@ -45,8 +52,9 @@ function assertSameState(world, client) {
     assert.equal(mirror.state, unit.state);
     assert.equal(mirror.carryAmount, unit.carry ? unit.carry.amount : 0);
   }
-  assert.equal(client.buildings.size, world.buildings.size);
-  for (const building of world.buildings.values()) {
+  const buildings = visibleBuildings(world);
+  assert.equal(client.buildings.size, buildings.length);
+  for (const building of buildings) {
     const mirror = client.buildings.get(building.id);
     assert.ok(mirror, `건물 ${building.id}이(가) 클라이언트에 없다`);
     assert.equal(mirror.complete, building.complete);
@@ -57,10 +65,10 @@ function assertSameState(world, client) {
 test('델타만 이어 받아도 클라이언트 상태가 서버와 같다', () => {
   const { world, feed, client } = setup();
 
-  // 첫 틱은 전체가 addU/addB로 들어온다
+  // 첫 틱은 보이는 것 전체가 addU/addB로 들어온다 (내 농노 4, 내 영주관 — 상대 본진은 안개 속)
   const first = tick(world, feed, client);
-  assert.equal(first.addU.length, 8);
-  assert.equal(first.addB.length, 2);
+  assert.equal(first.addU.length, 4);
+  assert.equal(first.addB.length, 1);
   assertSameState(world, client);
 
   // 농노 두 기를 금광으로 보내고 20초를 델타로만 따라간다 (채취 → 반납 → 다시 채취)

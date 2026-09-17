@@ -142,6 +142,7 @@ function move(world, slot, { unitIds, x, y }, attacking = false) {
 function attack(world, slot, { unitIds, targetId }) {
   const target = world.entity(targetId);
   if (!target || !world.areEnemies(target.owner, slot) || target.hp <= 0) return REJECT.INVALID_TARGET;
+  if (!world.canTarget(world.teamOf(slot), target)) return REJECT.INVALID_TARGET; // 안개 속의 적 (본 적 있는 건물은 된다)
   const info = UNITS[target.type] ? { def: UNITS[target.type], shieldWall: target.shieldWall } : { building: true, type: target.type };
   const units = ownUnits(world, slot, unitIds).filter((unit) => computeDamage(UNITS[unit.type], info) > 0);
   if (!units.length) return REJECT.CANNOT_ATTACK;

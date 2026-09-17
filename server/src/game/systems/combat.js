@@ -6,6 +6,7 @@ import { attackReach, computeDamage, isMelee } from '@rune/shared/rules/combat.j
 import { lineOfSight } from '../pathfinding/astar.js';
 import { distanceToRect } from '../World.js';
 import { canAct, canMove, damageDealtMultiplier, damageTakenMultiplier, slowFactor } from './abilities.js';
+import { revealAttacker } from './vision.js';
 
 const ACQUIRE_EVERY_TICKS = 4; // 0.2초마다 주변 적을 찾는다 (유닛마다 틱을 엇갈려서)
 const MELEE_ACQUIRE_RANGE = 5; // 근접 유닛이 스스로 싸우러 가는 거리 (타일)
@@ -37,6 +38,8 @@ export function gapBetween(unit, target) {
 /**
  * 전투: 공격 명령·공격 이동·대기 중인 병력의 적 찾기, 사거리까지 쫓기, 공격, 범위 피해, 감시탑.
  * 죽은 유닛·건물은 이 다음 cleanup에서 치운다.
+ * 전장의 안개: 스스로는 우리 팀에게 보이는 적만 노린다. 공격 명령으로 쫓던 유닛이 안개 속으로 사라지면
+ * 마지막으로 본 곳까지 공격 이동으로 간다. 범위·연쇄 피해는 보이든 말든 그 자리의 적에게 들어간다.
  */
 export function updateCombat(world, dt) {
   for (const unit of world.units.values()) {
@@ -56,10 +59,19 @@ export function updateCombat(world, dt) {
 function chooseTarget(world, unit) {
   const def = UNITS[unit.type];
   const order = unit.order;
+  const team = world.teamOf(unit.owner);
 
   if (order?.type === 'attack') {
     const target = world.entity(order.targetId);
     if (isEnemyAlive(world, target, unit.owner)) {
+      if (isUnit(target)) {
+        if (!world.isVisibleTo(team, target)) {
+          chaseIntoFog(world, unit, order);
+          return null;
+        }
+        order.lastX = target.x;
+        order.lastY = target.y;
+      }
       unit.combatTargetId = target.id;
       return target;
     }
@@ -68,7 +80,7 @@ function chooseTarget(world, unit) {
   }
 
   let target = unit.combatTargetId != null ? world.entity(unit.combatTargetId) : null;
-  if (!isEnemyAlive(world, target, unit.owner)) target = null;
+  if (!isEnemyAlive(world, target, unit.owner) || !world.isVisibleTo(team, target)) target = null;
   const seekRange = acquireRange(def.attack) + rangeBonus(unit);
   if (target && unit.autoTarget && gapBetween(unit, target) > seekRange + LEASH_EXTRA) target = null;
   if (!target && unit.combatTargetId != null) disengage(world, unit);
@@ -82,6 +94,17 @@ function chooseTarget(world, unit) {
     }
   }
   return target;
+}
+
+/** 쫓던 적이 안개 속으로 사라졌다: 마지막으로 본 곳까지 공격 이동으로 간다 (그곳에서 보이는 적과 다시 싸운다) */
+function chaseIntoFog(world, unit, order) {
+  const { lastX, lastY } = order;
+  world.stopUnit(unit);
+  if (lastX === undefined) return;
+  const goal = { rect: { x: Math.floor(lastX), y: Math.floor(lastY), w: 1, h: 1 }, adjacent: false, point: { x: lastX, y: lastY } };
+  unit.order = { type: 'attackMove', goal };
+  unit.state = UNIT_STATE.MOVE;
+  world.requestPath(unit, goal);
 }
 
 /** 싸우던 적이 사라졌다: 공격 이동 중이면 목적지로 다시 가고, 아니면 그 자리에 선다 */
@@ -99,11 +122,14 @@ function disengage(world, unit) {
 
 function findEnemy(world, unit, def) {
   const range = acquireRange(def.attack) + rangeBonus(unit);
+  const team = world.teamOf(unit.owner);
+  const { vision } = world;
 
-  // 나를 때린 적이 쫓을 만한 거리에 있으면 먼저 반격한다
+  // 나를 때린 적이 쫓을 만한 거리에 있으면 먼저 반격한다 (때린 적은 잠깐 드러나 있다)
   const attacker = unit.lastAttackerId != null ? world.entity(unit.lastAttackerId) : null;
   if (
     isEnemyAlive(world, attacker, unit.owner) &&
+    world.isVisibleTo(team, attacker) &&
     gapBetween(unit, attacker) <= range + LEASH_EXTRA &&
     computeDamage(def, targetInfo(attacker)) > 0
   ) {
@@ -115,6 +141,7 @@ function findEnemy(world, unit, def) {
   for (const other of world.units.values()) {
     if (!world.areEnemies(other.owner, unit.owner) || other.carrierId) continue;
     if (Math.abs(other.x - unit.x) > range + 1 || Math.abs(other.y - unit.y) > range + 1) continue;
+    if (!vision.isVisible(team, other.x, other.y)) continue; // 안개 속의 적은 스스로 노리지 않는다
     const gap = gapBetween(unit, other);
     if (gap > range || computeDamage(def, targetInfo(other)) <= 0) continue;
     const score = gap + (UNITS[other.type].worker ? WORKER_TARGET_PENALTY : 0);
@@ -126,7 +153,7 @@ function findEnemy(world, unit, def) {
   for (const building of world.buildings.values()) {
     if (!world.areEnemies(building.owner, unit.owner)) continue;
     const gap = gapBetween(unit, building);
-    if (gap > range) continue;
+    if (gap > range || !vision.isRectVisible(team, building)) continue;
     const score = gap + BUILDING_TARGET_PENALTY;
     if (score < bestScore) {
       bestScore = score;
@@ -235,6 +262,7 @@ function hit(world, attacker, def, target, scale = 1) {
   if (damage <= 0) return;
   target.hp -= damage;
   if (isUnit(target)) target.lastAttackerId = attacker.id;
+  revealAttacker(world, attacker, target);
 }
 
 // ---------- 감시탑 ----------
@@ -244,15 +272,23 @@ const towerGap = (building, unit) => distanceToRect(unit.x, unit.y, building) - 
 function updateTower(world, building, dt) {
   const def = BUILDINGS[building.type];
   if (building.cooldown > 0) building.cooldown = Math.max(0, building.cooldown - dt);
+  const team = world.teamOf(building.owner);
+  const { vision } = world;
 
   let target = building.combatTargetId != null ? world.units.get(building.combatTargetId) : null;
-  if (!isEnemyAlive(world, target, building.owner) || towerGap(building, target) > def.attack.range) target = null;
+  if (
+    !isEnemyAlive(world, target, building.owner) ||
+    towerGap(building, target) > def.attack.range ||
+    !vision.isVisible(team, target.x, target.y)
+  ) {
+    target = null;
+  }
   if (!target && (world.tick + building.id) % ACQUIRE_EVERY_TICKS === 0) {
     let bestScore = Infinity;
     for (const unit of world.units.values()) {
       if (!world.areEnemies(unit.owner, building.owner) || unit.carrierId) continue;
       const gap = towerGap(building, unit);
-      if (gap > def.attack.range) continue;
+      if (gap > def.attack.range || !vision.isVisible(team, unit.x, unit.y)) continue;
       const score = gap + (UNITS[unit.type].worker ? WORKER_TARGET_PENALTY : 0);
       if (score < bestScore) {
         bestScore = score;

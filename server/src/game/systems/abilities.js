@@ -5,6 +5,7 @@ import { RESOURCES } from '@rune/shared/data/economy.js';
 import { GAME_EVENT, REJECT, UNIT_STATE } from '@rune/shared/protocol.js';
 import { POS_SCALE } from '@rune/shared/snapshot.js';
 import { computeDamage } from '@rune/shared/rules/combat.js';
+import { revealAttacker } from './vision.js';
 
 export const toTicks = (seconds) => Math.max(1, Math.round((seconds * 1000) / TICK_MS));
 
@@ -33,6 +34,7 @@ function abilityHit(world, attacker, target, damage, type) {
   if (dealt <= 0) return;
   target.hp -= dealt;
   target.lastAttackerId = attacker.id;
+  revealAttacker(world, attacker, target);
 }
 
 /** 받는 피해 배율: 새벽의 오라(-15%)와 뿌리내리기(-30%) */

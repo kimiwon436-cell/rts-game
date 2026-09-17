@@ -91,8 +91,8 @@ test('두 명이 같은 방에 들어가 준비하면 게임이 시작된다', a
   // 첫 스냅샷은 전체 상태(키프레임)다: 농노 4기씩, 영주관 1채씩, 시작 금 200
   const [snap] = await once(alice, EV.GAME_SNAP);
   assert.equal(snap.full, true);
-  assert.equal(snap.addU.length, 8);
-  assert.equal(snap.addB.length, 2);
+  assert.equal(snap.addU.length, 4, '내 농노 4기만 온다 (상대 본진은 안개 속)');
+  assert.equal(snap.addB.length, 1);
   assert.equal(snap.me[0], 200);
 
   // 그 다음부터는 바뀐 것만 오는 델타다 (새로 생긴 유닛이 없으면 addU는 아예 오지 않는다)
@@ -190,7 +190,7 @@ test('경기 중에 끊겨도 유예 시간 안에 돌아오면 이어서 한다
   // 돌아온 사람은 전체 상태를 다시 받는다
   const [snap] = await once(back, EV.GAME_SNAP);
   assert.equal(snap.full, true);
-  assert.equal(snap.addU.length, 8);
+  assert.equal(snap.addU.length, 4);
   assert.ok(snap.t > 0, '경기는 그동안 계속 돌고 있었다');
 
   await online;

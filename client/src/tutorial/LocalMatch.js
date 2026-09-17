@@ -17,7 +17,7 @@ export class LocalMatch {
     this.mapId = mapId;
     this.mySlot = mySlot;
     this.world = new World(loadMap(mapId), players);
-    this.feed = new SnapshotFeed();
+    this.feed = new SnapshotFeed(this.world);
     this.handlers = new Map();
     this.queue = [];
     this.seq = 0;
@@ -70,9 +70,8 @@ export class LocalMatch {
     const { rejects, events } = stepWorld(this.world, commands);
     for (const reject of rejects) if (reject.slot === this.mySlot) this.dispatch(EV.GAME_REJECT, reject);
 
-    const snap = this.first
-      ? this.feed.full(this.world, this.mySlot)
-      : this.feed.personalize(this.feed.buildDelta(this.world, events), this.world, this.mySlot);
+    this.feed.update(this.world, events);
+    const snap = this.first ? this.feed.full(this.world, this.mySlot) : this.feed.snapshotFor(this.world, this.mySlot);
     this.first = false;
     this.dispatch(EV.GAME_SNAP, snap);
     for (const listener of this.tickListeners) listener(events);

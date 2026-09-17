@@ -69,7 +69,7 @@ export function createGameView({
   const teamGame = players.length > 2;
   const camera = new Camera(map.width * TILE_SIZE, map.height * TILE_SIZE);
   const renderer = new Renderer(canvas, world, camera, players);
-  const minimap = new Minimap(world, camera);
+  const minimap = new Minimap(world, camera, { fog: renderer.fog });
   const input = new Input(canvas);
   const touchMode = isCoarsePointer();
   const commandCard = createCommandCard({ onAction });
