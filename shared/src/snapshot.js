@@ -31,6 +31,16 @@ export const UNIT_FLAG = Object.freeze({
   CARRIED: 128, // 아르카논 등에 타고 있다
 });
 
+const unitFlags = (u) =>
+  (u.shieldWall ? UNIT_FLAG.SHIELD_WALL : 0) |
+  (u.stunned ? UNIT_FLAG.STUNNED : 0) |
+  (u.slowed ? UNIT_FLAG.SLOWED : 0) |
+  (u.rooted ? UNIT_FLAG.ROOTED : 0) |
+  (u.rooting ? UNIT_FLAG.ROOTING : 0) |
+  (u.channeling ? UNIT_FLAG.CHANNELING : 0) |
+  (u.buffed ? UNIT_FLAG.AURA : 0) |
+  (u.carried ? UNIT_FLAG.CARRIED : 0);
+
 export function encodeUnit(u) {
   return [
     u.id,
@@ -42,16 +52,23 @@ export function encodeUnit(u) {
     u.state,
     u.carry ? CARRY_KINDS.indexOf(u.carry.kind) : 0,
     u.carry ? u.carry.amount : 0,
-    (u.shieldWall ? UNIT_FLAG.SHIELD_WALL : 0) |
-      (u.stunned ? UNIT_FLAG.STUNNED : 0) |
-      (u.slowed ? UNIT_FLAG.SLOWED : 0) |
-      (u.rooted ? UNIT_FLAG.ROOTED : 0) |
-      (u.rooting ? UNIT_FLAG.ROOTING : 0) |
-      (u.channeling ? UNIT_FLAG.CHANNELING : 0) |
-      (u.buffed ? UNIT_FLAG.AURA : 0) |
-      (u.carried ? UNIT_FLAG.CARRIED : 0),
+    unitFlags(u),
     u.extra ?? 0, // 유닛 종류별 추가 값: 아르카논=탑승 인원, 에테리아=영창 남은 틱
   ];
+}
+
+/** 지난 인코딩이 지금 유닛과 같은가 (새 배열을 만들지 않고 비교만 한다. 종류·주인은 바뀌지 않는다) */
+export function unitMatchesEncoding(u, a) {
+  return (
+    a[3] === Math.round(u.x * POS_SCALE) &&
+    a[4] === Math.round(u.y * POS_SCALE) &&
+    a[5] === Math.ceil(u.hp) &&
+    a[6] === u.state &&
+    a[7] === (u.carry ? CARRY_KINDS.indexOf(u.carry.kind) : 0) &&
+    a[8] === (u.carry ? u.carry.amount : 0) &&
+    a[9] === unitFlags(u) &&
+    a[10] === (u.extra ?? 0)
+  );
 }
 
 export function decodeUnit(a) {
@@ -113,6 +130,11 @@ export function encodeBuilding(b) {
     Math.floor(b.progress * 1000),
     (b.complete ? 1 : 0) | (b.started ? 2 : 0),
   ];
+}
+
+/** 지난 인코딩이 지금 건물과 같은가 (자리·종류·주인은 바뀌지 않는다) */
+export function buildingMatchesEncoding(b, a) {
+  return a[5] === Math.ceil(b.hp) && a[6] === Math.floor(b.progress * 1000) && a[7] === ((b.complete ? 1 : 0) | (b.started ? 2 : 0));
 }
 
 export function decodeBuilding(a) {
@@ -227,7 +249,10 @@ export function decodePlayer(a) {
 // 틱마다 바뀐 필드만 보낸다. 서버는 지난번에 보낸 인코딩과 비교해 마스크를 만들고,
 // 클라이언트는 마스크를 보고 그 필드만 덮어쓴다.
 
-export const UNIT_DELTA = Object.freeze({ POS: 1, HP: 2, STATE: 4, CARRY: 8, FLAGS: 16, EXTRA: 32 });
+// 위치는 지난번에 보낸 위치에서 움직인 만큼(MOVE, 1/16타일)을 보낸다. 한 틱 이동은 몇 칸이라
+// 숫자가 짧고 반복이 많아 절대 좌표보다 원본은 약 25%, 압축 뒤에는 훨씬 더 준다.
+// POS(절대 좌표)는 예전(버전 1) 리플레이를 읽으려고 남겨 둔다.
+export const UNIT_DELTA = Object.freeze({ POS: 1, HP: 2, STATE: 4, CARRY: 8, FLAGS: 16, EXTRA: 32, MOVE: 64 });
 export const BUILDING_DELTA = Object.freeze({ HP: 1, PROGRESS: 2, FLAGS: 4 });
 
 /** 바뀐 필드만 담은 [id, 마스크, ...값]. 바뀐 게 없으면 null */
@@ -235,8 +260,8 @@ export function diffUnit(previous, current) {
   let mask = 0;
   const values = [];
   if (previous[3] !== current[3] || previous[4] !== current[4]) {
-    mask |= UNIT_DELTA.POS;
-    values.push(current[3], current[4]);
+    mask |= UNIT_DELTA.MOVE;
+    values.push(current[3] - previous[3], current[4] - previous[4]);
   }
   if (previous[5] !== current[5]) {
     mask |= UNIT_DELTA.HP;
@@ -265,10 +290,14 @@ export function diffUnit(previous, current) {
 export function applyUnitDelta(unit, delta) {
   const mask = delta[1];
   let i = 2;
-  const moved = Boolean(mask & UNIT_DELTA.POS);
-  if (moved) {
+  const moved = Boolean(mask & (UNIT_DELTA.POS | UNIT_DELTA.MOVE));
+  if (mask & UNIT_DELTA.POS) {
     unit.x = delta[i++] / POS_SCALE;
     unit.y = delta[i++] / POS_SCALE;
+  } else if (mask & UNIT_DELTA.MOVE) {
+    // 좌표는 늘 1/16의 배수라 소수 오차 없이 정수로 되돌려 더할 수 있다
+    unit.x = (Math.round(unit.x * POS_SCALE) + delta[i++]) / POS_SCALE;
+    unit.y = (Math.round(unit.y * POS_SCALE) + delta[i++]) / POS_SCALE;
   }
   if (mask & UNIT_DELTA.HP) unit.hp = delta[i++];
   if (mask & UNIT_DELTA.STATE) unit.state = delta[i++];

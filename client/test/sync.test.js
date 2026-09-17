@@ -7,6 +7,7 @@ import { World } from '../../server/src/game/World.js';
 import { stepWorld } from '../../server/src/game/Simulation.js';
 import { SnapshotFeed } from '../../server/src/game/sync/snapshot.js';
 import { ClientWorld } from '../src/world/ClientWorld.js';
+import { POS_SCALE, UNIT_DELTA, applyUnitDelta } from '@rune/shared/snapshot.js';
 
 const PLAYERS = [
   { uid: 'p1', nickname: 'P1', slot: 0 },
@@ -129,4 +130,35 @@ test('보간은 서버보다 두 틱 뒤의 위치를 그린다', () => {
   for (let i = 0; i < 3; i++) client.updateDrawPositions(0.016);
   assert.ok(mirror.drawX > before, '보간이 이어져야 한다');
   assert.ok(mirror.drawX <= mirror.x + 0.001, '서버 위치를 앞지르지 않는다');
+});
+
+test('위치는 움직인 만큼만 보내고, 오래 이어 받아도 클라이언트 좌표가 서버와 1/16타일까지 같다', () => {
+  const { world, feed, client } = setup();
+  tick(world, feed, client);
+  const peasants = [...world.units.values()].filter((u) => u.owner === MY_SLOT);
+  const mine = world.map.goldMines[0];
+  tick(world, feed, client, [
+    { slot: MY_SLOT, cmd: { seq: 1, type: CMD.GATHER, unitIds: peasants.map((u) => u.id), mineId: mine.id } },
+  ]);
+
+  const moves = [];
+  for (let i = 0; i < 600; i++) {
+    const snap = tick(world, feed, client);
+    for (const delta of snap.updU ?? []) if (delta[1] & UNIT_DELTA.MOVE) moves.push(delta);
+  }
+  assert.ok(moves.length > 100, '움직인 틱이 충분히 있었다');
+  assert.ok(moves.every((delta) => Math.abs(delta[2]) <= 8 && Math.abs(delta[3]) <= 8), '한 틱 이동량은 작은 수다');
+  for (const unit of peasants) {
+    const mirror = client.units.get(unit.id);
+    assert.equal(Math.round(mirror.x * POS_SCALE), Math.round(unit.x * POS_SCALE), `${unit.id} x`);
+    assert.equal(Math.round(mirror.y * POS_SCALE), Math.round(unit.y * POS_SCALE), `${unit.id} y`);
+  }
+});
+
+test('예전 리플레이의 절대 위치(POS) 델타도 읽는다', () => {
+  const unit = { x: 1, y: 1 };
+  assert.equal(applyUnitDelta(unit, [7, UNIT_DELTA.POS, 160, 320]), true);
+  assert.deepEqual([unit.x, unit.y], [10, 20]);
+  assert.equal(applyUnitDelta(unit, [7, UNIT_DELTA.MOVE, -8, 3]), true);
+  assert.deepEqual([unit.x, unit.y], [9.5, 20.1875]);
 });

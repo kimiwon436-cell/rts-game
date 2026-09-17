@@ -1,4 +1,5 @@
 import {
+  buildingMatchesEncoding,
   diffBuilding,
   diffUnit,
   encodeAllies,
@@ -8,6 +9,7 @@ import {
   encodePublicPlayer,
   encodeUnit,
   POS_SCALE,
+  unitMatchesEncoding,
 } from '@rune/shared/snapshot.js';
 import { BUILDINGS, BUILDING_TYPES } from '@rune/shared/data/buildings.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
@@ -50,7 +52,8 @@ export class SnapshotFeed {
     this.own = new Map(); // slot → 마지막으로 보낸 own의 JSON
     this.me = new Map(); // slot → 마지막으로 보낸 me의 JSON
     this.allies = new Map(); // slot → 마지막으로 보낸 allies의 JSON
-    // 이번 틱의 인코딩. 두 팀이 같은 유닛을 보면 한 번만 만든다
+    // 유닛·건물마다 가장 최근 인코딩. 바뀌지 않았으면 같은 배열을 그대로 두어
+    // 팀 기준선과 같은 객체인지(===)만 보고 비교를 건너뛴다. 두 팀이 같은 유닛을 봐도 한 번만 만든다
     this.unitCodes = new Map();
     this.buildingCodes = new Map();
   }
@@ -62,10 +65,8 @@ export class SnapshotFeed {
     const playersChanged = this.players !== json;
     if (playersChanged) this.players = json;
 
-    this.unitCodes.clear();
-    this.buildingCodes.clear();
-    for (const unit of world.units.values()) this.unitCodes.set(unit.id, encodeUnit(unit));
-    for (const building of world.buildings.values()) this.buildingCodes.set(building.id, encodeBuilding(building));
+    refreshCodes(this.unitCodes, world.units, unitMatchesEncoding, encodeUnit);
+    refreshCodes(this.buildingCodes, world.buildings, buildingMatchesEncoding, encodeBuilding);
 
     for (const view of this.teams) view.update(world, events, this, playersChanged ? players : null);
   }
@@ -130,6 +131,16 @@ export class SnapshotFeed {
   }
 }
 
+/** 바뀐 것만 새로 인코딩하고, 사라진 것의 인코딩은 버린다 */
+function refreshCodes(codes, entities, matches, encode) {
+  for (const entity of entities.values()) {
+    const code = codes.get(entity.id);
+    if (!code || !matches(entity, code)) codes.set(entity.id, encode(entity));
+  }
+  if (codes.size === entities.size) return; // 모두 살아 있다
+  for (const id of codes.keys()) if (!entities.has(id)) codes.delete(id);
+}
+
 /** 한 팀이 보는 세상: 그 팀에게 마지막으로 보낸 것들과 이번 틱 델타 */
 class TeamView {
   constructor(team, world) {
@@ -164,6 +175,7 @@ class TeamView {
       if (!this.sees(world, unit)) continue;
       const encoded = feed.unitCodes.get(unit.id);
       const previous = this.units.get(unit.id);
+      if (previous === encoded) continue; // 지난번에 보낸 그대로다
       if (!previous) {
         addU.push(encoded);
       } else {
@@ -185,6 +197,7 @@ class TeamView {
       if (world.teamOf(building.owner) !== team && !vision.isRectVisible(team, building)) continue;
       const encoded = feed.buildingCodes.get(building.id);
       const previous = this.buildings.get(building.id);
+      if (previous === encoded) continue;
       if (!previous) {
         addB.push(encoded);
       } else {

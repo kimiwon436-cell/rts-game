@@ -254,3 +254,17 @@ test('2대2 방: 사람이 적은 팀으로 들어가고, 방장만 설정을 �
   assert.equal(result.winnerTeam, 0);
   assert.equal(result.players.length, 4);
 });
+
+test('방 목록은 짧은 사이의 변화를 모아 한 번에 보낸다', async () => {
+  const watcher = await connected(player('watcher'));
+  const hosts = await Promise.all(['host1', 'host2', 'host3'].map((name) => connected(player(name))));
+  await new Promise((resolve) => setTimeout(resolve, 300)); // 앞선 테스트의 방송이 끝나기를 기다린다
+  const updates = [];
+  watcher.on(EV.LOBBY_UPDATE, (rooms) => updates.push(rooms));
+
+  const created = await Promise.all(hosts.map((host) => host.emitWithAck(EV.LOBBY_CREATE, {})));
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(updates.length, 1, '세 방이 거의 동시에 생겨도 목록은 한 번만 간다');
+  for (const { room } of created) assert.ok(updates[0].some((r) => r.id === room.id), '모아 보낸 목록에 모든 방이 있다');
+  await Promise.all(hosts.map((host) => host.emitWithAck(EV.LOBBY_LEAVE)));
+});

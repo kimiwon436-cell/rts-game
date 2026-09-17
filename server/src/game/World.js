@@ -46,6 +46,10 @@ export class World {
     this.events = [];
     /** 경로 계산을 기다리는 유닛 id (processPathQueue가 틱마다 예산만큼 처리) */
     this.pathQueue = [];
+    /** 틱마다 다시 채우는 유닛 공간 색인 (separation.js·combat.js가 처음 쓸 때 만든다) */
+    this.bodyGrid = null;
+    this.combatGrid = null;
+    this.scratchUnits = []; // 색인을 만들 때 쓰는 재사용 배열
     /** 경기 결과. 정해지면 { winner, reason, tick } */
     this.result = null;
 
