@@ -715,12 +715,27 @@ export function createGameView({
 
   // 터치 화면용 도구: Esc·드래그 선택을 대신한다
   const cancelModeButton = h('button', { class: 'touch-btn is-cancel', type: 'button', hidden: true, onClick: () => cancelMode() }, '취소');
+  // 터치에는 Esc가 없고 빈 땅을 누르면 이동 명령이 되므로, 선택을 푸는 버튼을 따로 둔다
+  const deselectButton = h(
+    'button',
+    {
+      class: 'touch-btn',
+      type: 'button',
+      hidden: true,
+      onClick: () => {
+        cancelMode();
+        selection.clear();
+      },
+    },
+    '선택 해제',
+  );
   const chat = createChatBox({ messages: chatMessages, teamGame, variant: 'overlay', onSend: onSendChat });
   const touchTools = touchMode
     ? h(
         'div',
         { class: 'touch-tools', role: 'group', 'aria-label': '빠른 선택' },
         cancelModeButton,
+        deselectButton,
         tutorial ? null : h('button', { class: 'touch-btn', type: 'button', onClick: () => chat.open() }, '채팅'),
         h('button', { class: 'touch-btn', type: 'button', onClick: () => selectArmy() }, '병력 전체'),
         h('button', { class: 'touch-btn', type: 'button', onClick: () => selectIdleWorkers() }, '쉬는 농노'),
@@ -880,6 +895,7 @@ export function createGameView({
 
     commandCard.update({ world, selection, players, touch: touchMode });
     cancelModeButton.hidden = !(casting || targeting || placing);
+    deselectButton.hidden = selection.size === 0;
   }
 
   // ---------- 루프 ----------
