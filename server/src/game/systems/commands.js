@@ -1,4 +1,4 @@
-import { UNITS, isNaval } from '@rune/shared/data/units.js';
+import { UNITS, domainOf } from '@rune/shared/data/units.js';
 import { BUILDINGS, BUILD_MENU, PRODUCTION_QUEUE_MAX } from '@rune/shared/data/buildings.js';
 import { ABILITIES } from '@rune/shared/data/abilities.js';
 import { OATHS, OATH_IDS } from '@rune/shared/data/oaths.js';
@@ -121,14 +121,16 @@ const NAVAL_TARGET_SEARCH = 48;
 
 /**
  * 이동과 공격 이동. 공격 이동은 가는 길에 만난 적과 싸우고(combat.js) 다시 목적지로 간다.
- * 배와 뭍 유닛은 다니는 곳이 달라 따로 자리를 잡는다: 배는 찍은 곳에서 가장 가까운 물로, 뭍 유닛은 가장 가까운 뭍으로.
+ * 다니는 곳(뭍·물·하늘)마다 따로 자리를 잡는다: 배는 찍은 곳에서 가장 가까운 물로, 뭍 유닛은 가장 가까운 뭍으로,
+ * 공중 유닛은 찍은 곳 그대로.
  */
 function move(world, slot, { unitIds, x, y }, attacking = false) {
   const units = ownUnits(world, slot, unitIds);
   if (!units.length || !world.nav.inside(Math.floor(x), Math.floor(y))) return REJECT.INVALID_TARGET;
 
   let moved = false;
-  for (const group of [units.filter((u) => !isNaval(u.type)), units.filter((u) => isNaval(u.type))]) {
+  for (const domain of ['land', 'water', 'air']) {
+    const group = units.filter((u) => domainOf(u.type) === domain);
     if (!group.length) continue;
     const nav = world.navOf(group[0]);
     const slots = world.destinationSlots(x, y, group.length, nav, nav === world.waterNav ? NAVAL_TARGET_SEARCH : 12);

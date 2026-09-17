@@ -1,4 +1,4 @@
-// 유닛 능력치 — docs/GAME_DESIGN.md 3·4장 (기본 7종 + 맹세의 궁극 유닛 3종 + 해군 3종)
+// 유닛 능력치 — docs/GAME_DESIGN.md 3·4장 (기본 7종 + 맹세의 궁극 유닛 3종 + 해군 3종 + 공군 3종)
 // 사거리·이동 속도·반지름·시야는 타일 단위, 생산 시간·공격 간격은 초 단위
 
 export const UNITS = Object.freeze({
@@ -246,9 +246,68 @@ export const UNITS = Object.freeze({
     attack: { damage: 40, type: 'siege', range: 8, cooldown: 3.8, splash: 1 },
     naval: true,
   },
+
+  // ---------- 공군 (그리폰 둥지) ----------
+  // flying: 지형과 유닛을 무시하고 곧장 난다. 근접 공격은 하늘에 닿지 않고, 관통 피해를 두 배로 받는다
+
+  falcon_scout: {
+    id: 'falcon_scout',
+    name: '매 정찰병',
+    title: '멀리 보는 눈',
+    age: 2,
+    producedAt: 'aerie',
+    cost: { gold: 40, wood: 0, mana: 20 },
+    trainTime: 14,
+    pop: 1,
+    hp: 90,
+    armor: 'air',
+    speed: 5.5,
+    radius: 0.3,
+    sight: 13,
+    attack: null, // 싸우지 않는다
+    flying: true,
+  },
+  gryphon_rider: {
+    id: 'gryphon_rider',
+    name: '그리폰 기수',
+    title: '하늘에서 덮치는 기사',
+    age: 3,
+    producedAt: 'aerie',
+    cost: { gold: 120, wood: 60, mana: 80 },
+    trainTime: 35,
+    pop: 3,
+    hp: 300,
+    armor: 'air',
+    speed: 4.0,
+    radius: 0.45,
+    sight: 10,
+    attack: { damage: 22, type: 'normal', range: 2, cooldown: 1.3 }, // 내리찍기 — 하늘도 때린다
+    flying: true,
+  },
+  storm_wyvern: {
+    id: 'storm_wyvern',
+    name: '폭풍 비룡',
+    title: '성벽을 부수는 날개',
+    age: 3,
+    producedAt: 'aerie',
+    cost: { gold: 160, wood: 80, mana: 160 },
+    trainTime: 45,
+    pop: 4,
+    hp: 420,
+    armor: 'air',
+    speed: 3.2,
+    radius: 0.6,
+    sight: 10,
+    attack: { damage: 45, type: 'siege', range: 2.5, cooldown: 3.2, splash: 1.2 }, // 공성이라 하늘은 못 때린다
+    flying: true,
+  },
 });
 
 export const isNaval = (type) => Boolean(UNITS[type]?.naval);
+export const isFlying = (type) => Boolean(UNITS[type]?.flying);
+
+/** 유닛이 다니는 곳: 'land' | 'water' | 'air'. 서로 다른 곳을 다니면 부딪히지 않는다 */
+export const domainOf = (type) => (UNITS[type]?.flying ? 'air' : UNITS[type]?.naval ? 'water' : 'land');
 
 /** 궁극 유닛인지 */
 export const isUltimate = (type) => Boolean(UNITS[type]?.ultimate);

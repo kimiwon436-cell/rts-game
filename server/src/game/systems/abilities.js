@@ -314,7 +314,7 @@ function dawnCharge(world, unit, ability, point) {
   const end = { x: start.x + dirX * travelled, y: start.y + dirY * travelled };
 
   for (const target of world.units.values()) {
-    if (!world.areEnemies(target.owner, unit.owner) || UNITS[target.type].naval) continue; // 물 위의 배에는 닿지 않는다
+    if (!world.areEnemies(target.owner, unit.owner) || UNITS[target.type].naval || UNITS[target.type].flying) continue; // 물 위의 배와 하늘에는 닿지 않는다
     if (distanceToSegment(target, start, end) > ability.halfWidth + UNITS[target.type].radius) continue;
     abilityHit(world, unit, target, ability.damage, ability.damageType);
     target.stunUntil = Math.max(target.stunUntil, world.tick + toTicks(ability.stun));

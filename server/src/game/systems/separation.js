@@ -1,4 +1,4 @@
-import { UNITS } from '@rune/shared/data/units.js';
+import { UNITS, domainOf } from '@rune/shared/data/units.js';
 import { UnitGrid } from '../spatial.js';
 
 const CELL_SIZE = 2; // 공간 해시 한 칸 (타일). 유닛 지름보다 커야 한다
@@ -16,8 +16,8 @@ function heading(unit) {
   return length > 1e-4 ? [hx / length, hy / length] : null;
 }
 
-/** 배인지 (배와 뭍 유닛은 다니는 곳이 달라 서로 밀지 않는다 — 다리 위 병사와 다리 밑 배) */
-const NAVAL = Object.fromEntries(Object.entries(UNITS).map(([type, def]) => [type, Boolean(def.naval)]));
+/** 다니는 곳 (뭍·물·하늘). 다른 곳을 다니면 서로 밀지 않는다 — 다리 위 병사와 다리 밑 배, 머리 위의 그리폰 */
+const DOMAIN = Object.fromEntries(Object.keys(UNITS).map((type) => [type, domainOf(type)]));
 
 /** 경제 일을 하는 농노는 서로 겹쳐도 된다 (금광·나무 앞 교통 체증 방지) */
 const ignoresCollision = (unit) =>
@@ -40,7 +40,7 @@ export function separateUnits(world) {
   for (let n = 0; n < bodies.length; n++) {
     const a = bodies[n];
     const radius = UNITS[a.type].radius;
-    const naval = NAVAL[a.type];
+    const domain = DOMAIN[a.type];
     const cx = Math.floor(a.x / CELL_SIZE);
     const cy = Math.floor(a.y / CELL_SIZE);
     for (let row = cy - 1; row <= cy + 1; row++) {
@@ -50,7 +50,7 @@ export function separateUnits(world) {
         const cell = row * cols + col;
         for (let i = starts[cell]; i < starts[cell + 1]; i++) {
           const b = items[i];
-          if (b.id <= a.id || NAVAL[b.type] !== naval) continue;
+          if (b.id <= a.id || DOMAIN[b.type] !== domain) continue;
           // 한 축으로만 봐도 몸이 닿지 않는 거리면 건너뛴다 (그러면 실제 거리도 닿지 않는다 — 결과는 같고 계산만 준다)
           const reach = radius + UNITS[b.type].radius;
           const dx = b.x - a.x;

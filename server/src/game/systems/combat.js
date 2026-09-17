@@ -1,5 +1,5 @@
 import { BUILDINGS } from '@rune/shared/data/buildings.js';
-import { UNITS } from '@rune/shared/data/units.js';
+import { UNITS, domainOf } from '@rune/shared/data/units.js';
 import { garrisonOf } from '@rune/shared/rules/garrison.js';
 import { GAME_EVENT, UNIT_STATE } from '@rune/shared/protocol.js';
 import { attackReach, computeDamage, isMelee } from '@rune/shared/rules/combat.js';
@@ -46,8 +46,8 @@ function canFightAboard(world, unit, def) {
   return Boolean(carrier && garrisonOf(carrier.type)?.ridersFight) && !isMelee(def.attack);
 }
 
-/** 물 위에 있는 대상인가 (배). 건물은 모두 뭍에 있다 */
-const onWater = (entity) => isUnit(entity) && Boolean(UNITS[entity.type].naval);
+/** 대상이 있는 곳 ('land' | 'water' | 'air'). 건물은 모두 뭍에 있다 */
+const domainOfTarget = (entity) => (isUnit(entity) ? domainOf(entity.type) : 'land');
 
 /** 유닛 몸과 대상(유닛 몸 또는 건물 사각형)의 가장자리 사이 거리 */
 export function gapBetween(unit, target) {
@@ -238,8 +238,14 @@ function engage(world, unit, target) {
 
 function chase(world, unit, def, target) {
   const nav = world.navOf(unit);
-  if (Boolean(def.naval) !== onWater(target)) {
-    // 배가 뭍의 적을, 뭍의 원거리 유닛이 배를 쫓는다: 목표에서 가장 가까운 내 쪽 칸(물가)까지만 간다
+  if (def.flying) {
+    // 하늘: 지형을 가리지 않고 곧장 쫓는다
+    const point = isUnit(target) ? { x: target.x, y: target.y } : null;
+    world.moveUnit(unit, point ? { ...point, w: 0, h: 0 } : target, false, point);
+    return;
+  }
+  if (domainOf(unit.type) !== domainOfTarget(target)) {
+    // 배가 뭍의 적을, 뭍의 원거리 유닛이 배나 하늘의 적을 쫓는다: 목표에서 가장 가까운 내 쪽 칸까지만 간다
     const cx = isUnit(target) ? target.x : target.x + target.w / 2;
     const cy = isUnit(target) ? target.y : target.y + target.h / 2;
     const spot = world.nearestFreeTile(cx, cy, SHORE_SEARCH, nav);

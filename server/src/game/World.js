@@ -63,6 +63,8 @@ export class World {
     /** 배가 다니는 물길 (물과 다리 밑). 경기 중에 바뀌지 않는다 */
     this.waterNav = new NavGrid(this.width, this.height, this.tiles, (t) => !isNavigableWater(t));
     this.waterPathfinder = new Pathfinder(this.waterNav);
+    /** 하늘길: 아무것도 막지 않는다 (공중 유닛은 지형을 무시하고 곧장 난다) */
+    this.airNav = new NavGrid(this.width, this.height, this.tiles, () => false);
     /** 건물·건설 부지·금광이 차지한 칸 (배치 판정용) */
     this.occupied = new Uint8Array(this.tiles.length);
 
@@ -253,6 +255,15 @@ export class World {
    * @returns {boolean} 목표까지 닿는 경로를 찾았는지
    */
   moveUnit(unit, rect, adjacent, point = null) {
+    if (UNITS[unit.type].flying) {
+      // 하늘길: 길찾기 없이 목표로 곧장 난다 (건물 위에도 뜬다)
+      const target = point ?? { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+      unit.path = [[target.x, target.y]];
+      unit.pathPending = false;
+      unit.goal = { rect, adjacent, point };
+      unit.navVersion = this.airNav.version;
+      return true;
+    }
     const sx = clamp(Math.floor(unit.x), 0, this.width - 1);
     const sy = clamp(Math.floor(unit.y), 0, this.height - 1);
     const nav = this.navOf(unit);
@@ -269,9 +280,14 @@ export class World {
     return reached;
   }
 
-  /** 유닛이 다니는 격자: 배는 물길, 나머지는 뭍 */
+  /** 유닛이 다니는 격자: 공중은 하늘길, 배는 물길, 나머지는 뭍 */
   navOf(unit) {
-    return UNITS[unit.type].naval ? this.waterNav : this.nav;
+    return this.navForType(unit.type);
+  }
+
+  navForType(type) {
+    const def = UNITS[type];
+    return def.flying ? this.airNav : def.naval ? this.waterNav : this.nav;
   }
 
   stopUnit(unit) {
@@ -315,7 +331,7 @@ export class World {
 
   /** 건물 둘레의 빈 칸에 유닛을 만든다. toward(집결지나 맵 중앙)에 가까운 칸을 고른다. */
   spawnUnitNear(type, owner, building, toward) {
-    const nav = UNITS[type].naval ? this.waterNav : this.nav; // 배는 조선소 옆 물에서 나온다
+    const nav = this.navForType(type); // 배는 조선소 옆 물에서, 공중 유닛은 둥지 옆 아무 데서나
     for (let r = 1; r <= 4; r++) {
       const ring = { x: building.x - r + 1, y: building.y - r + 1, w: building.w + 2 * (r - 1), h: building.h + 2 * (r - 1) };
       const spots = this.ringTiles(ring).filter(([tx, ty]) => !nav.isBlocked(tx, ty));
@@ -416,7 +432,7 @@ export class World {
   /** 사각형 안에 걸친 유닛을 가장 가까운 빈 칸으로 옮긴다 */
   ejectUnits(rect) {
     for (const unit of this.units.values()) {
-      if (unit.carrierId || UNITS[unit.type].naval) continue; // 배는 물 위에 있어 건물 자리와 겹치지 않는다
+      if (unit.carrierId || UNITS[unit.type].naval || UNITS[unit.type].flying) continue; // 배와 공중 유닛은 건물 자리와 겹치지 않는다
       if (distanceToRect(unit.x, unit.y, rect) >= UNITS[unit.type].radius) continue;
       const spot = this.nearestFreeTile(unit.x, unit.y);
       if (!spot) continue;
