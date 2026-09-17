@@ -1,4 +1,4 @@
-// 건물 능력치 — docs/GAME_DESIGN.md 5장 (기본 9종 + 왕국 시대 맹세의 성소 + 조선소)
+// 건물 능력치 — docs/GAME_DESIGN.md 5장 (기본 9종 + 왕국 시대 맹세의 성소 + 조선소 + 그리폰 둥지)
 // size: 정사각형 풋프린트 한 변의 타일 수, pop: 완성 시 늘어나는 인구 상한
 // sight: 완성된 건물의 시야 (풋프린트 중심에서 잰 타일 수, 짓는 중에는 FOUNDATION_SIGHT)
 
@@ -139,6 +139,18 @@ export const BUILDINGS = Object.freeze({
     coastal: true, // 바다와 이어진 물에 두 칸 이상 닿아야 한다 (rules/placement.js)
     hotkey: 'V',
   },
+  aerie: {
+    id: 'aerie',
+    name: '그리폰 둥지',
+    age: 2,
+    size: 3,
+    cost: { gold: 150, wood: 200, mana: 100 },
+    buildTime: 55,
+    hp: 1000,
+    sight: 9,
+    trains: ['falcon_scout', 'gryphon_rider', 'storm_wyvern'],
+    hotkey: 'F',
+  },
 });
 
 /** 건물 하나의 생산 대기열 최대 길이 */
@@ -160,4 +172,5 @@ export const BUILD_MENU = Object.freeze([
   'market',
   'sanctum',
   'shipyard',
+  'aerie',
 ]);

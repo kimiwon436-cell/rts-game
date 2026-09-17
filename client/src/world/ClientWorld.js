@@ -3,6 +3,7 @@ import { BUILDINGS } from '@rune/shared/data/buildings.js';
 import { UNITS } from '@rune/shared/data/units.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
 import { GAME_EVENT } from '@rune/shared/protocol.js';
+import { AIR_ALTITUDE_TILES } from '../render/entities.js';
 import { ABILITIES, ABILITY_IDS } from '@rune/shared/data/abilities.js';
 import { REVEAL_SIGHT, VisionGrid, sightOf } from '@rune/shared/rules/vision.js';
 import {
@@ -17,9 +18,11 @@ import {
   POS_SCALE,
 } from '@rune/shared/snapshot.js';
 
-/** 유닛은 그리는 위치, 건물은 풋프린트 중심 (타일 좌표) */
+/** 유닛은 그리는 위치(공중은 뜬 높이만큼 위), 건물은 풋프린트 중심 (타일 좌표) */
 const centerOf = (entity) =>
-  entity.size ? { x: entity.x + entity.size / 2, y: entity.y + entity.size / 2 } : { x: entity.drawX, y: entity.drawY };
+  entity.size
+    ? { x: entity.x + entity.size / 2, y: entity.y + entity.size / 2 }
+    : { x: entity.drawX, y: entity.drawY - (UNITS[entity.type]?.flying ? AIR_ALTITUDE_TILES : 0) };
 
 /**
  * 스냅샷 보간. 화면은 서버보다 INTERP_DELAY 틱(=100ms) 뒤를 보여 준다.

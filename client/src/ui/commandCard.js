@@ -283,7 +283,7 @@ function unitStats(def) {
   const base = attack
     ? `공격 ${attack.damage} ${ATTACK_TYPE_NAMES[attack.type]} · 사거리 ${attack.range} · ${ARMOR_NAMES[def.armor]}`
     : `싸우지 않음 · ${def.garrison ? `${def.garrison.capacity}기 수송 · ` : ''}${ARMOR_NAMES[def.armor]}`;
-  const naval = def.naval ? ' · 물 위로만 다님' : '';
+  const naval = def.naval ? ' · 물 위로만 다님' : def.flying ? ' · 하늘을 난다 (근접 공격이 닿지 않음)' : '';
   return def.title ? `${def.title} · ${base}${naval}` : `${base}${naval}`;
 }
 

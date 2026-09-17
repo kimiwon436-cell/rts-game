@@ -5,6 +5,7 @@ import { ABILITIES } from '@rune/shared/data/abilities.js';
 import { TerrainCache, drawDeepWater } from './terrain.js';
 import { FogLayer } from './fog.js';
 import {
+  altitudeOf,
   drawBuilding,
   drawEffect,
   drawGoldMine,
@@ -192,7 +193,7 @@ export class Renderer {
       const max = UNITS[unit.type].hp;
       if (unit.hp >= max || unit.carried || this.selection.has(unit.id)) continue;
       const x = unit.drawX * S;
-      const y = unit.drawY * S;
+      const y = unit.drawY * S - altitudeOf(unit.type);
       if (!intersects(view, x - S, y - S, S * 2, S * 2)) continue;
       drawHealthBar(ctx, x, y - 26, Math.max(20, UNITS[unit.type].radius * S * 2), unit.hp / max);
     }
@@ -267,8 +268,9 @@ export class Renderer {
         const y = unit.drawY * S;
         const relation = this.world.relationOf(unit);
         const radius = UNITS[unit.type].radius * S;
+        // 공중 유닛은 고리를 땅(그림자 자리)에, 체력 막대는 떠 있는 높이에 그린다
         drawSelectionRing(ctx, x, y + 7, radius + 2, relation);
-        drawHealthBar(ctx, x, y - 26, Math.max(20, radius * 2), unit.hp / UNITS[unit.type].hp);
+        drawHealthBar(ctx, x, y - 26 - altitudeOf(unit.type), Math.max(20, radius * 2), unit.hp / UNITS[unit.type].hp);
         continue;
       }
 

@@ -1,10 +1,16 @@
 import { TILE_SIZE } from '@rune/shared/constants.js';
+import { UNITS } from '@rune/shared/data/units.js';
 import { UNIT_STATE } from '@rune/shared/protocol.js';
 
 // 건물·유닛·금광의 임시 그림. 스프라이트가 생기면 이 파일만 바꾸면 된다.
 
 const S = TILE_SIZE;
 const TAU = Math.PI * 2;
+
+/** 공중 유닛은 제 자리보다 이만큼 위에 그리고 발밑에 그림자를 둔다 (선택 고리·체력 막대·투사체도 같이 올린다) */
+export const AIR_ALTITUDE = 22;
+export const AIR_ALTITUDE_TILES = AIR_ALTITUDE / S;
+export const altitudeOf = (type) => (UNITS[type]?.flying ? AIR_ALTITUDE : 0);
 
 function circle(ctx, x, y, r) {
   ctx.beginPath();
@@ -168,6 +174,31 @@ const ART = {
     ctx.fillRect(px + 14, py + size - 8, size - 28, 3);
   },
 
+  aerie(ctx, px, py, size, color) {
+    // 바위 봉우리 위의 둥지
+    ctx.fillStyle = '#6a655e';
+    polygon(ctx, [[px + 6, py + size - 6], [px + 18, py + 22], [px + 40, py + 14], [px + size - 8, py + size - 6]]);
+    ctx.fillStyle = '#7f7a71';
+    polygon(ctx, [[px + 18, py + 22], [px + 29, py + 8], [px + 40, py + 14]]);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+    ctx.fillRect(px + 10, py + size - 14, size - 20, 8);
+    // 나뭇가지 둥지와 알
+    ctx.fillStyle = '#7a5a3a';
+    ellipse(ctx, px + 44, py + 34, 18, 9);
+    ctx.strokeStyle = '#5d4327';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * TAU;
+      stroke(ctx, px + 44 + Math.cos(a) * 8, py + 34 + Math.sin(a) * 4, px + 44 + Math.cos(a) * 19, py + 34 + Math.sin(a) * 10, '#5d4327', 1.5);
+    }
+    ctx.fillStyle = '#efe6d2';
+    circle(ctx, px + 40, py + 32, 4);
+    circle(ctx, px + 49, py + 33, 3.5);
+    // 횃대와 깃발
+    stroke(ctx, px + 16, py + size - 8, px + 16, py + 12, '#4a3520', 3);
+    flag(ctx, px + 16, py + 4, color);
+  },
+
   shipyard(ctx, px, py, size, color) {
     // 목조 부두 바닥
     ctx.fillStyle = '#6b4e32';
@@ -315,6 +346,91 @@ function shipHull(ctx, u, x, y, f, len, beam, t, hullColor = '#6b4a2c') {
   ctx.fillRect(x - len * 0.9, yy - beam * 0.2, len * 1.65, 3);
   return yy;
 }
+
+/**
+ * 공중 유닛 그리기 준비: 땅에 그림자를 깔고, 하늘에 뜬 자리와 날갯짓 위상을 돌려준다.
+ * @returns {{ x: number, y: number, f: number, flap: number }}
+ */
+function flyer(ctx, u, t, flapMs = 260) {
+  const x = u.drawX * S;
+  const ground = u.drawY * S;
+  const hover = Math.sin(t / 520 + u.id) * 2;
+  const size = UNITS[u.type].radius * S * 0.8;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  ellipse(ctx, x, ground + 8, size, size * 0.4);
+  return { x, y: ground - AIR_ALTITUDE + hover, f: u.facing ?? 1, flap: Math.sin(t / flapMs + u.id) };
+}
+
+const AIR_ART = {
+  falcon_scout(ctx, u, color, t) {
+    const { x, y, f, flap } = flyer(ctx, u, t, 110);
+    ctx.strokeStyle = '#8a7558'; // 긴 날개
+    ctx.lineWidth = 2.5;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(x, y - 1);
+      ctx.quadraticCurveTo(x + side * 7, y - 4 - flap * 5, x + side * 13, y - 1 - flap * 7);
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#6b5a45';
+    ellipse(ctx, x, y, 5.5, 3.5);
+    ctx.fillStyle = color;
+    ctx.fillRect(x - 2, y - 1.5, 4, 3); // 주인 표식
+    ctx.fillStyle = '#e8d9a8';
+    circle(ctx, x + f * 5, y - 2.5, 2.2);
+    ctx.fillStyle = '#d8a13a';
+    ctx.fillRect(x + f * 7, y - 3, 2, 1.5); // 부리
+  },
+
+  gryphon_rider(ctx, u, color, t) {
+    const { x, y, f, flap } = flyer(ctx, u, t, 190);
+    // 날개
+    ctx.fillStyle = '#c9bda2';
+    for (const side of [-1, 1]) {
+      polygon(ctx, [
+        [x, y - 2],
+        [x + side * 16, y - 10 - flap * 7],
+        [x + side * 20, y - 2 - flap * 4],
+        [x + side * 8, y + 2],
+      ]);
+    }
+    ctx.fillStyle = '#b08b52'; // 사자 몸
+    ellipse(ctx, x, y + 1, 11, 6);
+    ctx.fillStyle = '#d9cdb4'; // 독수리 머리
+    circle(ctx, x + f * 10, y - 4, 4.5);
+    ctx.fillStyle = '#d8a13a';
+    polygon(ctx, [[x + f * 14, y - 4], [x + f * 19, y - 2.5], [x + f * 14, y - 1]]);
+    // 기수
+    ctx.fillStyle = color;
+    circle(ctx, x - f * 2, y - 8, 4.5);
+    ctx.fillStyle = '#9aa0a6';
+    circle(ctx, x - f * 2, y - 14, 3.2);
+    stroke(ctx, x - f * 2, y - 10, x + f * 12, y - 16, '#7a5634', 2); // 창
+  },
+
+  storm_wyvern(ctx, u, color, t) {
+    const { x, y, f, flap } = flyer(ctx, u, t, 240);
+    const spark = 0.5 + 0.5 * Math.sin(t / 180 + u.id);
+    ctx.fillStyle = '#4a5570'; // 큰 날개
+    for (const side of [-1, 1]) {
+      polygon(ctx, [
+        [x, y - 2],
+        [x + side * 20, y - 14 - flap * 8],
+        [x + side * 26, y - 1 - flap * 5],
+        [x + side * 10, y + 3],
+      ]);
+    }
+    ctx.fillStyle = '#5b6885'; // 몸통
+    ellipse(ctx, x, y + 1, 13, 6.5);
+    ctx.fillStyle = color;
+    ctx.fillRect(x - 5, y - 4, 10, 3);
+    ctx.fillStyle = '#6f7d9c'; // 머리와 꼬리
+    ellipse(ctx, x + f * 13, y - 3, 5.5, 4);
+    stroke(ctx, x - f * 12, y + 1, x - f * 24, y + 6, '#5b6885', 3);
+    ctx.fillStyle = `rgba(150, 195, 255, ${0.4 + spark * 0.5})`; // 폭풍 기운
+    circle(ctx, x + f * 18, y - 2, 3 + spark * 1.5);
+  },
+};
 
 const SHIP_ART = {
   war_galley(ctx, u, color, t) {
@@ -648,7 +764,7 @@ const UNIT_ART = {
 export function drawUnit(ctx, u, color, t) {
   if (u.carried) return; // 등에 탄 유닛은 태운 쪽 위에 겹쳐 그리지 않는다
   if (u.buffed) drawAuraMark(ctx, u);
-  (UNIT_ART[u.type] ?? SHIP_ART[u.type] ?? drawPeasant)(ctx, u, color, t);
+  (UNIT_ART[u.type] ?? SHIP_ART[u.type] ?? AIR_ART[u.type] ?? drawPeasant)(ctx, u, color, t);
   drawUnitStatus(ctx, u, t);
 }
 
@@ -663,10 +779,10 @@ function drawAuraMark(ctx, u) {
   ctx.stroke();
 }
 
-/** 기절·둔화·영창·탑승 같은 상태 표시 */
+/** 기절·둔화·영창·탑승 같은 상태 표시 (공중 유닛은 뜬 높이에 맞춰 그린다) */
 function drawUnitStatus(ctx, u, t) {
   const x = u.drawX * S;
-  const y = u.drawY * S;
+  const y = u.drawY * S - altitudeOf(u.type);
 
   if (u.slowed) {
     ctx.fillStyle = 'rgba(140, 170, 255, 0.28)';
