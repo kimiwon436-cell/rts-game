@@ -14,6 +14,9 @@ import { Minimap } from '../render/minimap.js';
 import { Input } from '../input/Input.js';
 import { TouchControls, isCoarsePointer } from '../input/TouchControls.js';
 import { REPLAY_SPEEDS, ReplayPlayer } from './ReplayPlayer.js';
+import { sound } from '../audio/soundEngine.js';
+import { createGameSounds } from '../audio/gameSounds.js';
+import { createSoundControl } from '../ui/soundControl.js';
 
 const PAN_SPEED = 1100;
 
@@ -53,7 +56,9 @@ export function createReplayView({ canvas, replay, onExit }) {
     minimap.markTerrainDirty();
   };
   world.onTerrainReset = redrawTerrain;
-  world.onEvent = (event) => {
+  const sounds = createGameSounds({ engine: sound, world, alarms: false }); // 리플레이는 공격·건물 소리와 음악만
+  world.onEvent = (event, removed) => {
+    sounds.onEvent(event, removed);
     if (event[0] === GAME_EVENT.OATH_TAKEN) {
       const oath = OATHS[OATH_IDS[event[2]]];
       showBanner(`${nameOf(event[1])} 왕국이 ${oath.name}를 맺었습니다`);
@@ -93,6 +98,7 @@ export function createReplayView({ canvas, replay, onExit }) {
     }
   });
   const closeButton = h('button', { class: 'btn btn-sm', type: 'button', onClick: () => onExit() }, '나가기');
+  const soundControl = createSoundControl();
 
   const banner = h('div', { class: 'hud-banner', role: 'status', hidden: true });
   let bannerTimer = null;
@@ -160,7 +166,7 @@ export function createReplayView({ canvas, replay, onExit }) {
   const el = h(
     'div',
     { class: isCoarsePointer() ? 'hud is-replay is-touch' : 'hud is-replay' },
-    h('header', { class: 'hud-top' }, resources, versus, h('div', { class: 'hud-right' }, closeButton)),
+    h('header', { class: 'hud-top' }, resources, versus, h('div', { class: 'hud-right' }, soundControl.el, closeButton)),
     h('div', { class: 'hud-banners' }, banner),
     h('div', { class: 'hud-minimap' }, minimap.canvas),
     info,
@@ -302,6 +308,8 @@ export function createReplayView({ canvas, replay, onExit }) {
 
     renderer.draw(now);
     minimap.draw(now);
+    const view = camera.visibleRect();
+    sounds.frame(dt, { x: view.x / TILE_SIZE, y: view.y / TILE_SIZE, w: view.w / TILE_SIZE, h: view.h / TILE_SIZE });
 
     hudTimer -= dt;
     if (hudTimer <= 0) {
@@ -320,6 +328,8 @@ export function createReplayView({ canvas, replay, onExit }) {
       window.removeEventListener('resize', onResize);
       input.destroy();
       touch.destroy();
+      sounds.stop();
+      soundControl.destroy();
       canvas.hidden = true;
     },
   };

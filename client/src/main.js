@@ -15,6 +15,7 @@ import { createRoomScreen } from './ui/roomScreen.js';
 import { createGameView } from './game/GameView.js';
 import { createReplayView } from './game/ReplayView.js';
 import { createRecorder, decodeReplay, pickReplayFile } from './game/replayFile.js';
+import { sound } from './audio/soundEngine.js';
 
 const app = document.getElementById('app');
 const canvas = document.getElementById('game');
@@ -40,9 +41,18 @@ if (import.meta.env.DEV) window.__rune = state;
 
 const me = () => ({ uid: state.session.uid, nickname: state.profile?.nickname ?? '' });
 
+// 브라우저는 사용자가 한 번 누르기 전에는 소리를 막는다: 처음 누르거나 키를 칠 때 소리를 켠다
+// (휴대폰은 손을 뗄 때만 허락하는 브라우저가 있어 pointerup·touchend도 듣는다)
+for (const type of ['pointerdown', 'pointerup', 'touchend', 'keydown']) {
+  window.addEventListener(type, () => sound.unlock(), { capture: true, passive: true });
+}
+/** 경기 화면(게임·튜토리얼·리플레이)은 게임 음악을 스스로 튼다. 나머지 화면은 로비 음악 */
+const PLAY_VIEWS = new Set(['game', 'tutorial', 'replay']);
+
 /** 화면을 바꾼다. 이전 화면은 destroy로 정리한다. */
 function show(view, screen) {
   state.screen?.destroy?.();
+  if (!PLAY_VIEWS.has(view)) sound.setMusic('lobby');
   state.view = view;
   state.screen = screen;
   app.replaceChildren(screen.el);

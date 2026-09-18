@@ -72,7 +72,7 @@ export class ClientWorld {
     this.onTerrainReset = null;
     /** true면 효과와 이벤트 알림 없이 상태만 적용한다 (리플레이 탐색) */
     this.quiet = false;
-    /** @type {(event: Array) => void} */
+    /** @type {(event: Array, removed: Map) => void} */
     this.onEvent = null;
     /** 전장의 안개 그림용 시야 (서버와 같은 규칙으로 우리 팀 것만 센다) */
     this.vision = new VisionGrid(map.width, map.height, { explored: true });
@@ -168,7 +168,7 @@ export class ClientWorld {
       }
       if (this.quiet) continue; // 리플레이 빨리 감기: 상태만 따라가고 효과·알림은 건너뛴다
       this.addCombatEffect(event, removed);
-      this.onEvent?.(event);
+      this.onEvent?.(event, removed); // removed: 이번 스냅샷에서 사라진 유닛·건물 (쓰러진 자리·종류)
     }
   }
 
