@@ -119,9 +119,15 @@ rune-and-crown/
    ├─ vite.config.js
    ├─ index.html
    ├─ .env.example
-   ├─ public/assets/         # 스프라이트, 사운드
+   ├─ public/assets/         # 스프라이트
+   ├─ scripts/               # sounds:doc(사운드 목록 문서) · sounds:check(빠진 소리 점검)
    └─ src/
       ├─ main.js             # 로그인 → 로비 → 게임
+      ├─ assets/sounds/      # 사운드 파일 (docs/SOUNDS.md의 이름대로 넣는다)
+      ├─ audio/
+      │  ├─ soundList.js     # 모든 소리의 목록 (게임·문서·점검이 함께 쓴다)
+      │  ├─ soundEngine.js   # Web Audio: 효과음·반복음·알람·음악, 설정
+      │  └─ gameSounds.js    # 게임 사건 → 소리
       ├─ firebase.js         # 클라이언트 SDK, 익명 로그인
       ├─ net/
       │  ├─ socket.js        # 연결, 토큰 전달, 재접속
@@ -489,6 +495,33 @@ BENCH_DETERMINISTIC=1 npm run bench -w server  # 결과 해시 비교용 (경로
   - 로비: 방 목록 방송을 0.25초 안의 변화끼리 모아 한 번에 보낸다 (방 하나가 바뀔 때마다 로비 전원에게 보내지 않게)
 - 느린 틱은 10초마다 오는 대규모 이동 명령(명령 적용 + 경로 계산)에서 나고, 경로 계산은 틱당 24회·8ms 예산이 막아 준다.
   틱 하나는 50ms라서 이 장면을 수십 개 동시에 돌려도 한 코어 안에 든다 (Render 인스턴스는 이 기계보다 느리니 여유를 두고 본다).
+
+---
+
+## 5-9. 사운드 (`client/src/audio/`, 넣는 법: `docs/SOUNDS.md`)
+
+- **다섯 가지뿐**: 배경 음악 2곡(`bgm/lobby` 로비·대기실, `bgm/game` 경기) · 유닛별 공격(`attack/<유닛>`) ·
+  짓는 중(`construction`) · 건설 완료(`complete`) · 알람(`alarm`). 짓는 중·건설 완료·알람은 파일 하나를 모든 건물·상황이 같이 쓴다.
+  공격 소리는 게임 데이터에서 만들므로 공격하는 유닛을 더하면 목록에도 생긴다. 감시탑은 장궁병 소리를 빌려 쓴다 (`BORROWED_ATTACK`).
+- **목록 하나가 기준**: `soundList.js`의 id가 파일 이름이다 (`<id>.mp3`, 여러 판이면 `<id>_1.mp3` …).
+  `npm run sounds:doc -w client`가 `docs/SOUNDS.md`와 폴더(`.gitkeep`)를 만들고, `npm run sounds:check -w client`가
+  빠진 소리·이름이 틀린 파일·큰 파일을 알린다. 파일은 Vite `import.meta.glob`이 빌드 때 모으므로 넣기만 하면 쓰인다.
+  없는 소리는 조용히 건너뛴다.
+- **엔진** (`soundEngine.js`): 첫 입력(pointerdown·pointerup·touchend·keydown)에서 AudioContext를 켠다 (브라우저 정책).
+  갈래마다 GainNode(전체 → 음악·알람·효과음), 설정은 `localStorage`의 `rune.sound` (HUD·로비의 **소리** 버튼).
+  - 효과음: 처음 쓸 때 받아 푼 버퍼. 화면 속 위치로 좌우(±0.7)·크기(가장자리 −45%)를 정하고, 화면에서 멀면 내지 않는다.
+    같은 소리는 45ms 간격·동시 4개, 전체 동시 28개까지
+  - 짓는 중: 게임이 0.25초마다 "지금 들려야 할 공사 터"를 넘기면(`setLoops`) 반복 버퍼를 켜고 끈다. 가까운 2곳까지, 아무 데서나 시작.
+    다른 탭으로 가면 끈다 (화면이 멈추니까)
+  - 알람: 한 번에 하나. 더 급한 알람만 나던 알람을 끊는다. 못 낸 알람은 간격을 기다리지 않고 다음 기회에 다시 울린다
+  - 음악: `<audio>` 스트리밍을 1.2초에 걸쳐 바꿔 튼다
+- **사건 → 소리** (`gameSounds.js`, 엔진을 주입받아 Node에서 시험한다 — `client/test/sounds.test.js`)
+  - `ATTACK` → 공격한 쪽 자리에서 그 유닛의 공격 소리. 우리 것이 화면 밖에서 맞으면 알람 (안개 속 적이 쏴도 난다)
+  - 공사 터의 진행도가 1.2초 안에 올랐으면 "짓는 중" (아무도 짓지 않는 터는 조용하다). `BUILT`(내 건물) → 건설 완료 (어디서든)
+  - 알람이 울리는 경우는 `ALARM_CASES` 하나에 모여 있다: 경우마다 되풀이 간격과 급한 정도
+    (왕관·패배·궁극 유닛 3 > 공격받음·공지·금광 2 > 자원 부족·지을 수 없음·인구·그 밖의 거부 1)
+  - 음악: 경기 화면(게임·튜토리얼·리플레이)은 `game`, 결과 화면까지 이어진다. 나머지 화면은 `lobby` (`main.js`의 `show`)
+  - 리플레이는 알람 없이 공격·건물 소리와 음악만
 
 ---
 

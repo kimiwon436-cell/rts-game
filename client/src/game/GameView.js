@@ -22,6 +22,10 @@ import { Minimap } from '../render/minimap.js';
 import { Input } from '../input/Input.js';
 import { TouchControls, isCoarsePointer } from '../input/TouchControls.js';
 import { downloadReplay } from './replayFile.js';
+import { sound } from '../audio/soundEngine.js';
+import { createGameSounds } from '../audio/gameSounds.js';
+import { SOUNDS } from '../audio/soundList.js';
+import { createSoundControl } from '../ui/soundControl.js';
 
 const PAN_SPEED = 1100; // 화면 픽셀/초
 const DRAG_THRESHOLD = 5;
@@ -75,6 +79,8 @@ export function createGameView({
   const touchMode = isCoarsePointer();
   const commandCard = createCommandCard({ onAction });
   const selection = renderer.selection;
+  const sounds = createGameSounds({ engine: sound, world });
+  sound.preload(Object.keys(SOUNDS).filter((id) => !id.startsWith('bgm/'))); // 효과음·알람은 작으니 미리 받아 둔다
 
   let seq = 0;
   let placing = null; // 배치 중인 건물 종류
@@ -108,8 +114,13 @@ export function createGameView({
     const now = performance.now();
     if (reason === lastReject.reason && now - lastReject.at < 1000) return;
     lastReject = { reason, at: now };
-    toast(errorMessage(reason), { error: true });
+    reject(reason);
   };
+  /** 명령이 안 된다고 알린다 (글과 알람) */
+  function reject(reason) {
+    toast(errorMessage(reason), { error: true });
+    sounds.onReject(reason);
+  }
   const onEnd = (result) => showResult(result);
   // 내 연결이 끊긴 동안은 화면이 멈춘다. 소켓이 스스로 다시 붙고, 붙으면 서버가 GAME_RESUME으로 이어 준다.
   const onOffline = () => {
@@ -133,7 +144,8 @@ export function createGameView({
     renderer.terrain.invalidateAll();
     minimap.markTerrainDirty();
   };
-  world.onEvent = (event) => {
+  world.onEvent = (event, removed) => {
+    sounds.onEvent(event, removed);
     if (event[0] === GAME_EVENT.BUILT && event[2] === mySlot) {
       const building = world.buildings.get(event[1]);
       if (building) toast(`${BUILDINGS[building.type].name}을(를) 다 지었습니다.`);
@@ -409,7 +421,7 @@ export function createGameView({
   function startPlacing(type) {
     const missing = missingResource(world.me, BUILDINGS[type].cost);
     if (missing) {
-      toast(errorMessage(NOT_ENOUGH[missing]), { error: true });
+      reject(NOT_ENOUGH[missing]);
       return;
     }
     targeting = false;
@@ -466,12 +478,12 @@ export function createGameView({
     const ghost = renderer.ghost;
     if (!ghost) return;
     if (!ghost.valid) {
-      toast(errorMessage(ghost.reason), { error: true });
+      reject(ghost.reason);
       return;
     }
     const unitIds = selectedWorkerIds();
     if (!unitIds.length) {
-      toast(errorMessage(REJECT.NO_WORKER), { error: true });
+      reject(REJECT.NO_WORKER);
       cancelPlacing();
       return;
     }
@@ -653,7 +665,8 @@ export function createGameView({
     }
     if (ended) return;
     if (event.code === 'Escape') {
-      if (!tributePanel.hidden) toggleTribute(false);
+      if (soundControl.open) soundControl.close();
+      else if (!tributePanel.hidden) toggleTribute(false);
       else if (casting) casting = null;
       else if (targeting) targeting = false;
       else if (placing) cancelPlacing();
@@ -701,6 +714,12 @@ export function createGameView({
   const netBanner = h('div', { class: 'hud-banner is-danger', role: 'status', hidden: true });
   const crownBanner = h('div', { class: 'hud-banner', role: 'status', hidden: true });
 
+  const soundControl = createSoundControl({
+    onOpen: () => {
+      toggleTribute(false);
+      surrenderConfirm.hidden = true;
+    },
+  });
   const surrenderConfirm = h(
     'div',
     { class: 'confirm', role: 'dialog', 'aria-label': '항복 확인', hidden: true },
@@ -895,6 +914,7 @@ export function createGameView({
 
     recorder?.finish(result);
     const won = result.winnerTeam === myTeam;
+    sounds.stop();
     const minutes = Math.floor(result.durationSec / 60);
     const seconds = String(result.durationSec % 60).padStart(2, '0');
     // replaceChildren은 null을 "null" 글자로 넣으므로, 조건부 항목이 섞인 목록은 걸러서 넘긴다
@@ -945,6 +965,7 @@ export function createGameView({
         'div',
         { class: 'hud-right' },
         tutorial ? null : ping,
+        soundControl.el,
         tributeButton,
         tributeButton ? tributePanel : null,
         tutorial ? null : surrenderButton,
@@ -1067,6 +1088,8 @@ export function createGameView({
 
     renderer.draw(now);
     minimap.draw(now);
+    const view = camera.visibleRect();
+    sounds.frame(dt, { x: view.x / TILE_SIZE, y: view.y / TILE_SIZE, w: view.w / TILE_SIZE, h: view.h / TILE_SIZE });
 
     hudTimer -= dt;
     if (hudTimer <= 0) {
@@ -1116,6 +1139,8 @@ export function createGameView({
       input.destroy();
       touch.destroy();
       chat.destroy();
+      sounds.stop();
+      soundControl.destroy();
       canvas.hidden = true;
     },
   };

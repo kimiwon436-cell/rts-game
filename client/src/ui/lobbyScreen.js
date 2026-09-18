@@ -3,6 +3,7 @@ import { ROOM_STATUS } from '@rune/shared/protocol.js';
 import { GAME_MODES, MAP_LIST } from '@rune/shared/map/maps/index.js';
 import { h, readStorage } from './dom.js';
 import { createLeaderboardDialog, createRankedPanel } from './rankedPanel.js';
+import { createSoundControl } from './soundControl.js';
 
 const STATUS_LABEL = {
   [ROOM_STATUS.WAITING]: '가득 참',
@@ -94,6 +95,7 @@ export function createLobbyScreen({
     h('button', { class: 'btn', type: 'button', onClick: () => onOpenReplay?.() }, '리플레이 파일 열기'),
   );
 
+  const soundControl = createSoundControl();
   const el = h(
     'main',
     { class: 'screen' },
@@ -110,6 +112,7 @@ export function createLobbyScreen({
           h('strong', {}, me.nickname),
           conn,
           ping,
+          soundControl.el,
           h('button', { class: 'btn btn-sm', type: 'button', onClick: () => onSignOut?.() }, '로그아웃'),
         ),
       ),
@@ -184,6 +187,9 @@ export function createLobbyScreen({
     },
     setRankedStatus: (status) => ranked.setStatus(status),
     setProfile: (next) => ranked.setProfile(next),
-    destroy: () => ranked.destroy(),
+    destroy: () => {
+      ranked.destroy();
+      soundControl.destroy();
+    },
   };
 }
