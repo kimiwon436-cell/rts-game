@@ -50,21 +50,23 @@ const BGM = [
 // 공격하는 순간 공격하는 유닛 자리에서 난다 (화면 속만, 화면 가장자리일수록 작게·그쪽 스피커로).
 // 싸우지 않는 유닛(수송선·매 정찰병)은 공격이 없으니 소리도 없다. 감시탑은 장궁병 소리를 같이 쓴다.
 
+// 공격 소리 예시: 게임 속 그림(client/src/render/entities.js)과 기획서의 무기에 맞춘다.
+// 원거리는 쏘는 순간의 소리다 (맞는 소리는 따로 없다)
 const ATTACK_SOUND = {
-  peasant: '곡괭이·도끼로 치는 소리',
-  pikeman: '창으로 찌르는 소리',
-  longbowman: '활시위를 당겼다 놓는 소리',
-  scout_rider: '말 위에서 칼을 휘두르는 소리',
-  knight: '긴 칼이 무겁게 휘둘리는 소리',
-  royal_guard: '칼로 내려치는 소리 (방패 부딪힘)',
-  battlemage: '마법 탄을 던지는 소리',
-  solarion: '빛나는 창이 크게 휘둘리는 소리',
-  etheria: '연쇄 번개가 튀는 소리',
-  arkanon: '땅을 내리찍는 굉음',
-  war_galley: '화살 여러 발을 한꺼번에 쏘는 소리',
+  peasant: '곡괭이·도끼 같은 작업 도구로 내리치는 소리',
+  pikeman: '긴 창(장창)으로 찌르는 소리',
+  longbowman: '장궁 시위를 놓는 소리',
+  scout_rider: '말 위에서 가벼운 곡도를 휘두르는 소리',
+  knight: '랜스(기병창)로 들이받는 묵직한 소리',
+  royal_guard: '한손검으로 내려치는 소리 (방패가 부딪히는 쇳소리)',
+  battlemage: '지팡이에서 파란 마법 탄을 쏘는 소리',
+  solarion: '빛나는 성창을 크게 휘두르는 소리 (맑은 울림)',
+  etheria: '별빛 지팡이에서 연쇄 번개가 튀는 소리',
+  arkanon: '거대한 몸으로 땅을 내리찍는 굉음',
+  war_galley: '배 위 궁수들이 화살을 한꺼번에 쏘는 소리',
   catapult_ship: '투석기 팔이 튕겨 돌을 날리는 소리',
-  gryphon_rider: '발톱으로 할퀴며 내리꽂는 소리',
-  storm_wyvern: '번개를 내리꽂는 폭격 소리',
+  gryphon_rider: '그리폰 위에서 창으로 내리찌르는 소리 (날갯짓)',
+  storm_wyvern: '폭풍 기운(번개)을 떨어뜨리는 폭격 소리',
 };
 
 const ATTACKS = UNIT_TYPES.filter((type) => UNITS[type].attack).map((type) =>
