@@ -6,6 +6,7 @@ import { TerrainCache, drawDeepWater } from './terrain.js';
 import { FogLayer } from './fog.js';
 import {
   altitudeOf,
+  buildingLabelY,
   drawBuilding,
   drawEffect,
   drawGoldMine,
@@ -91,6 +92,7 @@ export class Renderer {
     // 이동량을 기기 픽셀 단위로 반올림해 지형 청크 경계가 벌어지지 않게 한다
     const scale = camera.zoom * this.dpr;
     ctx.setTransform(scale, 0, 0, scale, -Math.round(camera.x * scale), -Math.round(camera.y * scale));
+    ctx.imageSmoothingQuality = 'high'; // 2배 해상도 스프라이트를 줄여 그릴 때 거칠어지지 않게
     const view = camera.visibleRect();
     // 맵 밖도 바다다: 월드 좌표에 붙은 무늬라 맵 가장자리의 깊은 물과 이어져 보인다
     ctx.fillStyle = this.seaPattern;
@@ -99,7 +101,7 @@ export class Renderer {
     this.fog.update(this.world.vision, this.world.teamOf(this.world.mySlot), timeMs);
 
     this.terrain.draw(ctx, view);
-    this.drawMines(ctx, view);
+    this.drawMines(ctx, view, timeMs);
     this.drawWells(ctx, view, timeMs);
     this.drawBuildings(ctx, view, timeMs);
     this.drawUnits(ctx, view, timeMs);
@@ -118,11 +120,11 @@ export class Renderer {
     this.drawDragBox(ctx);
   }
 
-  drawMines(ctx, view) {
+  drawMines(ctx, view, timeMs) {
     for (const mine of this.map.goldMines) {
       const amount = this.world.mineAmounts.get(mine.id);
       if (amount === undefined || !intersects(view, mine.x * S, mine.y * S, mine.w * S, mine.h * S)) continue;
-      drawGoldMine(ctx, mine, amount, this.initialMineAmount.get(mine.id));
+      drawGoldMine(ctx, mine, amount, this.initialMineAmount.get(mine.id), timeMs);
     }
   }
 
@@ -168,21 +170,24 @@ export class Renderer {
 
   drawBuildings(ctx, view, timeMs) {
     const visible = [...this.world.buildings.values()]
-      .filter((b) => intersects(view, b.x * S - S, b.y * S - S * 2, (b.size + 2) * S, (b.size + 3) * S))
+      // 지붕·탑·깃발이 풋프린트 위로 3칸 넘게 솟는다
+      .filter((b) => intersects(view, b.x * S - S, b.y * S - S * 3.4, (b.size + 2) * S, (b.size + 4.4) * S))
       .sort((a, b) => a.y + a.size - (b.y + b.size));
 
     for (const b of visible) {
-      drawBuilding(ctx, b, PLAYER_COLORS[b.owner], timeMs, this.world.ages.get(b.owner) ?? 1);
+      const age = this.world.ages.get(b.owner) ?? 1;
+      drawBuilding(ctx, b, PLAYER_COLORS[b.owner], timeMs, age);
       if (b.type === 'keep') {
         const player = this.players.find((p) => p.slot === b.owner);
-        if (player) drawLabel(ctx, `P${b.owner + 1} ${player.nickname}`, (b.x + b.size / 2) * S, b.y * S - 8, PLAYER_COLORS[b.owner]);
+        const labelY = b.complete ? buildingLabelY(b, PLAYER_COLORS[b.owner], age) : b.y * S - 8;
+        if (player) drawLabel(ctx, `P${b.owner + 1} ${player.nickname}`, (b.x + b.size / 2) * S, labelY, PLAYER_COLORS[b.owner]);
       }
     }
   }
 
   drawUnits(ctx, view, timeMs) {
     const visible = [...this.world.units.values()]
-      .filter((u) => intersects(view, u.drawX * S - S, u.drawY * S - S, S * 2, S * 2))
+      .filter((u) => intersects(view, u.drawX * S - S * 1.5, u.drawY * S - S * 2.4, S * 3, S * 3.4))
       .sort((a, b) => a.drawY - b.drawY);
     for (const u of visible) drawUnit(ctx, u, PLAYER_COLORS[u.owner], timeMs);
   }

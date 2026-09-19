@@ -229,14 +229,17 @@ export class ClientWorld {
       if (!attacker || !target) return;
       const attack = (UNITS[attacker.type] ?? BUILDINGS[attacker.type]).attack;
       const to = centerOf(target);
+      const from = centerOf(attacker);
+      // 그림: 친 순간부터 공격 동작을 보여 주고, 친 쪽을 바라본다
+      attacker.attackAt = now;
+      if (!attacker.size && Math.abs(to.x - from.x) > 0.05) attacker.facing = to.x > from.x ? 1 : -1;
       if (attack.range <= 1.5) {
         this.effects.push({ kind: 'slash', x: to.x, y: to.y, start: now, duration: 220 });
         return;
       }
-      const from = centerOf(attacker);
       const distance = Math.hypot(to.x - from.x, to.y - from.y);
       this.effects.push({
-        kind: attack.type === 'magic' ? 'bolt' : attack.type === 'siege' ? 'stone' : 'arrow',
+        kind: attacker.type === 'storm_wyvern' ? 'storm' : attack.type === 'magic' ? 'bolt' : attack.type === 'siege' ? 'stone' : 'arrow',
         from,
         to,
         splash: attack.splash ?? 0,
@@ -318,6 +321,9 @@ export class ClientWorld {
 
       const dx = x - unit.drawX;
       if (Math.abs(dx) > 0.004) unit.facing = dx > 0 ? 1 : -1;
+      // 그림: 몇 프레임째 제자리인가 (걷기 동작은 실제로 움직일 때만)
+      const moved = Math.abs(dx) + Math.abs(y - unit.drawY) > 0.0008;
+      unit.still = moved ? 0 : (unit.still ?? 0) + 1;
       unit.drawX = x;
       unit.drawY = y;
     }
