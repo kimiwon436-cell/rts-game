@@ -9,7 +9,7 @@ import { loadMap } from '@rune/shared/map/maps/index.js';
 import { TERRAIN, TERRAIN_NAMES, footprintCenter } from '@rune/shared/map/grid.js';
 import { CMD, EV, GAME_EVENT, REJECT, VICTORY_REASON } from '@rune/shared/protocol.js';
 import { PLACE, checkPlacement } from '@rune/shared/rules/placement.js';
-import { missingResource } from '@rune/shared/rules/costs.js';
+import { canSell, missingResource } from '@rune/shared/rules/costs.js';
 import { h } from '../ui/dom.js';
 import { toast } from '../ui/toast.js';
 import { errorMessage } from '../ui/messages.js';
@@ -44,7 +44,7 @@ function endReason(reason, won, team) {
     case VICTORY_REASON.ANNIHILATION:
       return won ? `${them} 가진 유닛과 건물을 모두 무너뜨렸습니다` : '유닛과 건물을 모두 잃었습니다';
     default:
-      return won ? `${them} 제한 시간 안에 영주관을 다시 세우지 못했습니다` : '제한 시간 안에 영주관을 다시 세우지 못했습니다';
+      return won ? `${them === '상대가' ? '상대의' : '상대 팀의'} 영주관을 무너뜨렸습니다` : '영주관이 무너졌습니다';
   }
 }
 
@@ -86,6 +86,8 @@ export function createGameView({
   let placing = null; // 배치 중인 건물 종류
   let targeting = false; // 공격 이동 지점을 고르는 중 (A 뒤 클릭)
   let casting = null; // 능력 쓸 지점을 고르는 중 { ability, unitIds }
+  let sellConfirm = { id: null, until: 0 }; // 판매는 두 번 눌러야 한다: 첫 번째 누른 건물과 기다리는 시각
+  const SELL_CONFIRM_MS = 3000;
   let ended = false;
   let press = null; // 왼쪽 버튼을 누른 위치 { x, y, shift }
   let lastClick = { time: 0, unitId: null }; // 더블클릭 판정
@@ -168,6 +170,11 @@ export function createGameView({
       const name = UNITS[event[2]]?.name ?? '궁극 유닛';
       if (event[1] === mySlot) toast(`${name}이(가) 쓰러졌습니다.`, { error: true });
       else toast(`적의 ${name}을(를) 쓰러뜨렸습니다.`);
+    } else if (event[0] === GAME_EVENT.BUILDING_SOLD && event[2] === mySlot) {
+      const sold = removed?.get(event[1]);
+      const refund = RESOURCES.map((resource, i) => [RESOURCE_NAMES[resource], event[3 + i]]).filter(([, n]) => n > 0);
+      const gain = refund.map(([name, n]) => `${name} +${n}`).join(' · ');
+      toast(`${sold ? BUILDINGS[sold.type].name : '건물'}을(를) 팔았습니다${gain ? ` (${gain})` : ''}.`);
     } else if (event[0] === GAME_EVENT.RESOURCES_SENT) {
       // 서버는 이 이벤트를 보낸 사람의 팀에게만 보낸다
       const [, from, to, resourceIndex, sent, received] = event;
@@ -372,6 +379,19 @@ export function createGameView({
       case 'cancelBuild':
         send({ type: CMD.CANCEL_BUILD, buildingId: action.id });
         break;
+      case 'sell': {
+        // 실수로 팔지 않게: 3초 안에 한 번 더 눌러야 판다
+        const now = performance.now();
+        if (sellConfirm.id === action.id && now < sellConfirm.until) {
+          send({ type: CMD.SELL_BUILDING, buildingId: action.id });
+          sellConfirm = { id: null, until: 0 };
+        } else {
+          sellConfirm = { id: action.id, until: now + SELL_CONFIRM_MS };
+          if (touchMode) toast('한 번 더 누르면 팝니다');
+        }
+        updateHud();
+        break;
+      }
       case 'trade':
         send({ type: CMD.TRADE, resource: action.resource, action: action.action });
         break;
@@ -664,6 +684,14 @@ export function createGameView({
       return;
     }
     if (ended) return;
+    if (event.code === 'Delete') {
+      // Delete: 고른 내 건물 팔기 (명령 카드의 X와 같다. 두 번 눌러야 판다)
+      const building = selection.size === 1 ? world.buildings.get([...selection][0]) : null;
+      if (!building || !world.isMine(building) || !building.complete) return;
+      if (canSell(building.type)) onAction({ kind: 'sell', id: building.id });
+      else reject(REJECT.CANNOT_SELL);
+      return;
+    }
     if (event.code === 'Escape') {
       if (soundControl.open) soundControl.close();
       else if (!tributePanel.hidden) toggleTribute(false);
@@ -712,7 +740,6 @@ export function createGameView({
   const zoomInfo = h('span', { class: 'mono' }, '100%');
   const banner = h('div', { class: 'hud-banner', role: 'status', hidden: true });
   const netBanner = h('div', { class: 'hud-banner is-danger', role: 'status', hidden: true });
-  const crownBanner = h('div', { class: 'hud-banner', role: 'status', hidden: true });
 
   const soundControl = createSoundControl({
     onOpen: () => {
@@ -972,7 +999,7 @@ export function createGameView({
         surrenderConfirm,
       ),
     ),
-    h('div', { class: 'hud-banners' }, crownBanner, netBanner, banner),
+    h('div', { class: 'hud-banners' }, netBanner, banner),
     h('div', { class: 'hud-minimap' }, minimap.canvas),
     tutorial ? null : h('div', { class: 'hud-chat' }, chat.el),
     touchTools,
@@ -1016,28 +1043,8 @@ export function createGameView({
       tag.lastChild.textContent = `P${player.slot + 1} ${player.nickname}${oath ? ` · ${OATHS[oath].name}` : ''}`;
     }
 
-    // 왕관 몰락 카운트다운: 내 것이 급하고, 없으면 상대 것을 보여준다
-    const mine = world.publicPlayers.get(mySlot);
-    const others = [...world.publicPlayers.values()].filter((p) => p.slot !== mySlot && p.collapseSeconds != null && !p.defeated);
-    const ally = others.find((p) => p.team === myTeam);
-    const rival = others.find((p) => p.team !== myTeam);
-    if (!ended && mine?.collapseSeconds != null) {
-      crownBanner.textContent = `왕관 몰락까지 ${mine.collapseSeconds}초 — 영주관을 다시 지으세요`;
-      crownBanner.className = 'hud-banner is-danger';
-      crownBanner.hidden = false;
-    } else if (!ended && ally) {
-      crownBanner.textContent = `팀원 ${playerName(ally.slot)}의 왕관 몰락까지 ${ally.collapseSeconds}초`;
-      crownBanner.className = 'hud-banner is-danger';
-      crownBanner.hidden = false;
-    } else if (!ended && rival) {
-      crownBanner.textContent = `${teamGame ? `${playerName(rival.slot)}의 ` : '상대 '}왕관 몰락까지 ${rival.collapseSeconds}초`;
-      crownBanner.className = 'hud-banner';
-      crownBanner.hidden = false;
-    } else {
-      crownBanner.hidden = true;
-    }
-
-    commandCard.update({ world, selection, players, touch: touchMode });
+    const confirming = performance.now() < sellConfirm.until ? sellConfirm.id : null;
+    commandCard.update({ world, selection, players, touch: touchMode, sellConfirm: confirming });
     updateTribute();
     cancelModeButton.hidden = !(casting || targeting || placing);
     deselectButton.hidden = selection.size === 0;

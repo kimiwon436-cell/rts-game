@@ -1,6 +1,6 @@
 import { PLAYER_COLORS } from '@rune/shared/constants.js';
 import { BUILDINGS, BUILD_MENU } from '@rune/shared/data/buildings.js';
-import { AGES, MAX_AGE, RESOURCES, RESOURCE_NAMES } from '@rune/shared/data/economy.js';
+import { AGES, MAX_AGE, RESOURCES, RESOURCE_NAMES, buildSpeedMultiplier } from '@rune/shared/data/economy.js';
 import { MARKET, buyCost, sellGain } from '@rune/shared/data/market.js';
 import { UNITS, WORKER } from '@rune/shared/data/units.js';
 import { ABILITIES } from '@rune/shared/data/abilities.js';
@@ -8,7 +8,7 @@ import { garrisonOf } from '@rune/shared/rules/garrison.js';
 import { OATHS } from '@rune/shared/data/oaths.js';
 import { TICK_MS } from '@rune/shared/constants.js';
 import { UNIT_STATE } from '@rune/shared/protocol.js';
-import { missingResource } from '@rune/shared/rules/costs.js';
+import { canSell, missingResource, sellRefund } from '@rune/shared/rules/costs.js';
 import { ARMOR_NAMES, ATTACK_TYPE_NAMES } from '@rune/shared/rules/combat.js';
 import { h } from './dom.js';
 
@@ -113,7 +113,7 @@ export function createCommandCard({ onAction }) {
     return h(
       'button',
       {
-        class: btn.short ? 'cc-btn is-short' : 'cc-btn',
+        class: `cc-btn${btn.short ? ' is-short' : ''}${btn.danger ? ' is-danger' : ''}`,
         type: 'button',
         disabled: btn.disabled,
         title: tooltip,
@@ -163,7 +163,7 @@ const ownerName = (players, slot) => {
 };
 
 /** 선택 상태를 화면에 그릴 모델로 바꾼다 */
-function describe({ world, selection, players, touch = false }) {
+function describe({ world, selection, players, touch = false, sellConfirm = null }) {
   const ids = [...selection];
   if (ids.length === 0 || !world.ready) {
     return {
@@ -189,7 +189,7 @@ function describe({ world, selection, players, touch = false }) {
   const units = ids.map((id) => world.units.get(id)).filter(Boolean);
   if (units.length) return describeUnits(world, units, players, touch);
   const building = world.buildings.get(ids[0]);
-  if (building) return describeBuilding(world, building, players, touch);
+  if (building) return describeBuilding(world, building, players, touch, sellConfirm);
   return { title: '선택한 대상 없음', buttons: [], live: {} };
 }
 
@@ -308,7 +308,25 @@ function groupStatus(units) {
   return [...counts].map(([state, n]) => `${STATE_TEXT[state]} ${n}`).join(' · ');
 }
 
-function describeBuilding(world, b, players, touch) {
+/** 이 공사 터를 짓고 있는 농노 수 (옆에 붙어 '건설 중'인 주인의 농노) */
+function builderCount(world, b) {
+  let count = 0;
+  for (const u of world.units.values()) {
+    if (u.owner !== b.owner || u.state !== UNIT_STATE.BUILD) continue;
+    const dx = Math.max(b.x - u.x, 0, u.x - (b.x + b.size));
+    const dy = Math.max(b.y - u.y, 0, u.y - (b.y + b.size));
+    if (Math.hypot(dx, dy) <= 1.3) count++;
+  }
+  return count;
+}
+
+const refundText = (refund) =>
+  RESOURCES.filter((r) => refund[r] > 0)
+    .map((r) => `${RESOURCE_NAMES[r]} +${refund[r]}`)
+    .join(' · ') || '돌려받는 것 없음';
+
+/** sellConfirm: 판매 확인을 기다리는 건물 id (한 번 더 누르면 판다) */
+function describeBuilding(world, b, players, touch, sellConfirm = null) {
   const def = BUILDINGS[b.type];
   const age = world.ages.get(b.owner) ?? 1;
   const model = {
@@ -322,7 +340,18 @@ function describeBuilding(world, b, players, touch) {
 
   if (!b.complete) {
     model.live.progress = b.progress;
-    model.live.progressLabel = b.started ? '건설 중' : '농노를 기다리는 중';
+    const builders = b.started ? builderCount(world, b) : 0;
+    if (!b.started) {
+      model.live.progressLabel = '농노를 기다리는 중';
+    } else if (builders) {
+      const speed = buildSpeedMultiplier(builders);
+      const seconds = Math.ceil(((1 - b.progress) * def.buildTime) / speed);
+      model.live.progressLabel = `건설 중 · 농노 ${builders}명 ×${speed.toFixed(1)}`;
+      model.live.text = `남은 시간 약 ${seconds}초`;
+    } else {
+      model.live.progressLabel = '멈춤 · 짓는 농노 없음';
+    }
+    model.hint = '농노가 많을수록 빨리 짓습니다 (2명 1.7배 · 4명 3배 · 8명 5.3배)';
     if (mine) model.buttons.push({ key: 'C', label: '건설 취소', note: '남은 만큼 환불', action: { kind: 'cancelBuild', id: b.id } });
     return model;
   }
@@ -331,6 +360,7 @@ function describeBuilding(world, b, players, touch) {
   if (!mine) return model;
   const me = world.me;
   model.buildingId = b.id;
+  addSellButton(model, b, def, sellConfirm);
 
   // 맹세의 성소: 아직 맹세를 맺지 않았으면 셋 중 하나를 고른다
   if (def.oathAltar && !world.myOath()) {
@@ -343,6 +373,7 @@ function describeBuilding(world, b, players, touch) {
         action: { kind: 'takeOath', oath: oath.id },
       })),
     );
+    if (model.sellButton) model.buttons.push(model.sellButton);
     return model;
   }
 
@@ -433,7 +464,28 @@ function describeBuilding(world, b, players, touch) {
       });
     }
   }
+  if (model.sellButton) model.buttons.push(model.sellButton);
+  if (model.unsellable) model.hint = [model.hint, '영주관은 팔 수 없습니다 · 무너지면 패배'].filter(Boolean).join(' · ');
   return model;
+}
+
+/**
+ * 판매 버튼 (X · Delete): 비용의 절반 × 남은 체력을 돌려받는다. 실수로 팔지 않게 두 번 눌러야 판다.
+ * 영주관은 팔 수 없다 (무너지면 지는 건물이다)
+ */
+function addSellButton(model, b, def, sellConfirm) {
+  if (!canSell(b.type)) {
+    model.unsellable = true;
+    return;
+  }
+  const confirming = sellConfirm === b.id;
+  model.sellButton = {
+    key: 'X',
+    label: confirming ? '한 번 더: 판매' : '판매',
+    note: refundText(sellRefund(b.type, b.hp / def.hp)),
+    danger: confirming,
+    action: { kind: 'sell', id: b.id },
+  };
 }
 
 function buildingHint(world, b, def) {

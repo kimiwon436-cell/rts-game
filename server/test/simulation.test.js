@@ -118,7 +118,10 @@ test('막힌 자리, 샘이 아닌 곳의 오벨리스크, 부족한 자원과 �
 
   assert.equal(command(world, 0, { type: CMD.PLACE, unitIds: ids, building: 'farmstead', x: keep.x, y: keep.y }), REJECT.BLOCKED);
   assert.equal(command(world, 0, { type: CMD.PLACE, unitIds: ids, building: 'obelisk', ...spot }), REJECT.NEEDS_WELL);
-  assert.equal(command(world, 0, { type: CMD.PLACE, unitIds: ids, building: 'keep', ...spot }), REJECT.NOT_ENOUGH_GOLD);
+  assert.equal(command(world, 0, { type: CMD.PLACE, unitIds: ids, building: 'keep', ...spot }), REJECT.INVALID, '영주관은 새로 짓지 못한다');
+  world.players[0].gold = 10;
+  assert.equal(command(world, 0, { type: CMD.PLACE, unitIds: ids, building: 'barracks', ...spot }), REJECT.NOT_ENOUGH_GOLD);
+  world.players[0].gold = 200;
   assert.equal(command(world, 0, { type: CMD.PLACE, unitIds: ids, building: 'market', ...spot }), REJECT.REQUIRES_AGE);
   assert.equal(command(world, 1, { type: CMD.PLACE, unitIds: ids, building: 'farmstead', ...spot }), REJECT.NO_WORKER);
   assert.deepEqual([world.players[0].gold, world.players[0].wood], [200, 200]);

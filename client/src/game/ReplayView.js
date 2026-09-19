@@ -26,7 +26,7 @@ const formatTime = (seconds) => {
 };
 
 const REASON_TEXT = {
-  [VICTORY_REASON.CONQUEST]: '왕관 몰락',
+  [VICTORY_REASON.CONQUEST]: '영주관 함락',
   [VICTORY_REASON.ANNIHILATION]: '전멸',
   [VICTORY_REASON.SURRENDER]: '항복',
   [VICTORY_REASON.LEFT]: '이탈',

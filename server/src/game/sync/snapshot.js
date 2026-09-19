@@ -15,7 +15,7 @@ import { BUILDINGS, BUILDING_TYPES } from '@rune/shared/data/buildings.js';
 import { TERRAIN } from '@rune/shared/map/grid.js';
 import { GAME_EVENT } from '@rune/shared/protocol.js';
 
-const publicPlayers = (world) => world.players.filter(Boolean).map((p) => encodePublicPlayer(p, world.tick));
+const publicPlayers = (world) => world.players.filter(Boolean).map((p) => encodePublicPlayer(p));
 
 /** 팀원 자원은 자주 바뀌니 이 틱 간격으로만 살핀다 (0.5초) */
 const ALLIES_INTERVAL = 10;
@@ -270,6 +270,7 @@ class TeamView {
         return this.shows(world, event[1]) || this.shows(world, event[2]);
       case GAME_EVENT.UNIT_DIED:
       case GAME_EVENT.BUILDING_DESTROYED:
+      case GAME_EVENT.BUILDING_SOLD:
         return this.gone.has(event[1]); // 이번 틱에 지운 것(보이던 것)만
       case GAME_EVENT.ABILITY:
         return this.shows(world, event[1]) || world.vision.isVisible(team, event[3] / POS_SCALE, event[4] / POS_SCALE);

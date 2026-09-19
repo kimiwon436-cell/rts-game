@@ -308,7 +308,7 @@ function dawnCharge(world, unit, ability, point) {
   while (travelled + step <= ability.range) {
     const nx = unit.x + dirX * (travelled + step);
     const ny = unit.y + dirY * (travelled + step);
-    if (world.nav.isBlocked(Math.floor(nx), Math.floor(ny))) break;
+    if (world.navOf(unit).isBlocked(Math.floor(nx), Math.floor(ny))) break;
     travelled += step;
   }
   const end = { x: start.x + dirX * travelled, y: start.y + dirY * travelled };

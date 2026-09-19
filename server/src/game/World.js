@@ -58,13 +58,20 @@ export class World {
     for (let i = 0; i < this.tiles.length; i++) {
       if (this.tiles[i] === TERRAIN.TREE) this.treeWood[i] = WOOD_PER_TREE;
     }
+    const teams = Math.max(2, ...players.map((p) => (p.team ?? p.slot) + 1));
+    /**
+     * 뭍 격자 둘:
+     * - nav: 모든 건물이 막는다. 유닛이 "서 있을" 자리(무리 이동의 목적지·생성·밀어내기·내리기)는 이것으로 고른다
+     * - teamNav[팀]: 그 팀이 "지나가는" 길. 우리 팀 건물은 지나가고, 다른 팀 건물은 부숴야 지나간다
+     */
     this.nav = new NavGrid(this.width, this.height, this.tiles);
-    this.pathfinder = new Pathfinder(this.nav);
+    this.teamNav = Array.from({ length: teams }, () => new NavGrid(this.width, this.height, this.tiles));
     /** 배가 다니는 물길 (물과 다리 밑). 경기 중에 바뀌지 않는다 */
     this.waterNav = new NavGrid(this.width, this.height, this.tiles, (t) => !isNavigableWater(t));
-    this.waterPathfinder = new Pathfinder(this.waterNav);
     /** 하늘길: 아무것도 막지 않는다 (공중 유닛은 지형을 무시하고 곧장 난다) */
     this.airNav = new NavGrid(this.width, this.height, this.tiles, () => false);
+    /** 격자마다 A* (탐색용 배열을 격자 크기로 미리 잡아 둔다) */
+    this.pathfinders = new Map([this.nav, this.waterNav, ...this.teamNav].map((nav) => [nav, new Pathfinder(nav)]));
     /** 건물·건설 부지·금광이 차지한 칸 (배치 판정용) */
     this.occupied = new Uint8Array(this.tiles.length);
 
@@ -79,7 +86,6 @@ export class World {
     this.wellOwner = new Map(); // wellId → 오벨리스크 buildingId
 
     this.players = [];
-    const teams = Math.max(2, ...players.map((p) => (p.team ?? p.slot) + 1));
     /** 전장의 안개: 팀별 시야 (systems/vision.js가 틱마다 갱신한다) */
     this.vision = new VisionGrid(this.width, this.height, { teams });
     /** 팀마다 한 번이라도 본 적 건물 id (안개 속에서도 공격 명령을 받는다) */
@@ -97,7 +103,6 @@ export class World {
         ageTarget: 0,
         ageProgress: 0,
         market: { ...MARKET.basePrice },
-        collapseAt: null, // 왕관 몰락 카운트다운이 끝나는 틱
         defeated: false,
         defeatReason: null,
         oath: null, // 'crown' | 'rune' | 'earth' — 한 번 맺으면 바꿀 수 없다
@@ -201,7 +206,7 @@ export class World {
       revealUntil: null,
     };
     this.buildings.set(building.id, building);
-    this.setFootprint(building, 1, complete);
+    this.setFootprint(building, 1, complete, owner);
     if (def.onWell) {
       const well = this.map.wells.find((w) => w.x === x && w.y === y);
       if (well) {
@@ -215,29 +220,39 @@ export class World {
   removeBuilding(building) {
     this.buildings.delete(building.id);
     for (const known of this.knownBuildings) known.delete(building.id);
-    this.setFootprint(building, 0, building.started);
+    this.setFootprint(building, 0, building.started, building.owner);
     if (building.wellId) this.wellOwner.delete(building.wellId);
   }
 
   /** 건설을 시작한다: 풋프린트를 막고 그 위의 유닛을 밖으로 밀어낸다 */
   startConstruction(building) {
     building.started = true;
-    this.nav.setRect(building, 1);
+    this.setNav(building, 1, building.owner);
     this.ejectUnits(building);
   }
 
-  /** 풋프린트의 점유(배치 판정)와, affectNav면 막힘(길찾기)도 바꾼다 */
-  setFootprint(rect, value, affectNav) {
+  /** 풋프린트의 점유(배치 판정)와, affectNav면 막힘(길찾기)도 바꾼다. owner: 건물 주인 (금광이면 null) */
+  setFootprint(rect, value, affectNav, owner = null) {
     for (let ty = rect.y; ty < rect.y + rect.h; ty++) {
       for (let tx = rect.x; tx < rect.x + rect.w; tx++) this.occupied[ty * this.width + tx] = value;
     }
-    if (affectNav) this.nav.setRect(rect, value);
+    if (affectNav) this.setNav(rect, value, owner);
+  }
+
+  /** 뭍 격자의 막힘을 바꾼다. 건물은 주인 팀의 길은 막지 않는다 */
+  setNav(rect, value, owner = null) {
+    this.nav.setRect(rect, value);
+    const ownTeam = owner == null ? -1 : this.teamOf(owner);
+    this.teamNav.forEach((nav, team) => {
+      if (team !== ownTeam) nav.setRect(rect, value);
+    });
   }
 
   fellTree(tile) {
     this.tiles[tile] = TERRAIN.GRASS;
     this.treeWood[tile] = 0;
     this.nav.setTile(tile, 0);
+    for (const nav of this.teamNav) nav.setTile(tile, 0);
     this.events.push([GAME_EVENT.TREE_FELLED, tile]);
   }
 
@@ -267,8 +282,7 @@ export class World {
     const sx = clamp(Math.floor(unit.x), 0, this.width - 1);
     const sy = clamp(Math.floor(unit.y), 0, this.height - 1);
     const nav = this.navOf(unit);
-    const pathfinder = nav === this.waterNav ? this.waterPathfinder : this.pathfinder;
-    const { tiles, reached } = pathfinder.find(sx, sy, rect, adjacent);
+    const { tiles, reached } = this.pathfinders.get(nav).find(sx, sy, rect, adjacent);
     const waypoints = toWaypoints(nav, unit.x, unit.y, tiles, UNITS[unit.type].radius);
     if (point && reached) {
       if (waypoints.length) waypoints[waypoints.length - 1] = [point.x, point.y];
@@ -280,11 +294,14 @@ export class World {
     return reached;
   }
 
-  /** 유닛이 다니는 격자: 공중은 하늘길, 배는 물길, 나머지는 뭍 */
+  /** 유닛이 지나가는 격자: 공중은 하늘길, 배는 물길, 뭍 유닛은 자기 팀 길 (우리 팀 건물은 지나간다) */
   navOf(unit) {
-    return this.navForType(unit.type);
+    const def = UNITS[unit.type];
+    if (def.flying || def.naval) return this.navForType(unit.type);
+    return this.teamNav[this.teamOf(unit.owner)] ?? this.nav;
   }
 
+  /** 유닛이 서 있을 수 있는 격자: 공중은 하늘길, 배는 물길, 뭍 유닛은 모든 건물을 피한 뭍 */
   navForType(type) {
     const def = UNITS[type];
     return def.flying ? this.airNav : def.naval ? this.waterNav : this.nav;

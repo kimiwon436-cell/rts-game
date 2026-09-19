@@ -266,14 +266,11 @@ test('명령이 거부되면 알람. 고칠 수 없는 거부는 조용하고, �
   assert.equal(engine.log.alarm.length, 6);
 });
 
-test('알림 사건: 시대 발전·맹세·왕관·패배·궁극 유닛·자원 받기', () => {
+test('알림 사건: 시대 발전·맹세·패배·궁극 유닛·자원 받기', () => {
   const { sounds, engine } = handMade({ players: TEAMS });
   sounds.onEvent([GAME_EVENT.AGE_UP, 1, 2]); // 상대의 발전은 조용하다
   sounds.onEvent([GAME_EVENT.AGE_UP, 0, 2]);
   sounds.onEvent([GAME_EVENT.OATH_TAKEN, 1, 0]);
-  sounds.onEvent([GAME_EVENT.CROWN_FALLING, 2]);
-  sounds.onEvent([GAME_EVENT.CROWN_FALLING, 3]);
-  sounds.onEvent([GAME_EVENT.CROWN_RESTORED, 2]);
   sounds.onEvent([GAME_EVENT.PLAYER_DEFEATED, 3]);
   sounds.onEvent([GAME_EVENT.PLAYER_DEFEATED, 2]);
   sounds.onEvent([GAME_EVENT.ULTIMATE_LOST, 1, 7]); // 적의 궁극 유닛
@@ -283,15 +280,12 @@ test('알림 사건: 시대 발전·맹세·왕관·패배·궁극 유닛·자�
   assert.deepEqual(reasons(engine), [
     'age_up',
     'oath',
-    'crown_falling',
-    'enemy_crown_falling',
-    'crown_restored',
     'enemy_defeated',
     'ally_defeated',
     'ultimate_lost',
     'resources_received',
   ]);
-  assert.equal(engine.log.alarm.find((a) => a.reason === 'crown_falling').priority, 3, '왕관은 가장 급하다');
+  assert.equal(engine.log.alarm.find((a) => a.reason === 'ally_defeated').priority, 3, '팀원이 쓰러진 것은 가장 급하다');
 });
 
 test('1대1에서 상대가 쓰러지면 알람 없이 결과 화면이 알린다', () => {
@@ -332,7 +326,7 @@ test('리플레이(알람 끔)는 공격 소리만 내고 알람은 내지 않�
   unit(1, 'pikeman', 0, 30, 20);
   unit(2, 'knight', 1, 31, 20);
   sounds.onEvent([GAME_EVENT.ATTACK, 2, 1]);
-  sounds.onEvent([GAME_EVENT.CROWN_FALLING, 0]);
+  sounds.onEvent([GAME_EVENT.OATH_TAKEN, 1, 0]);
   sounds.onReject(REJECT.NOT_ENOUGH_GOLD);
   assert.deepEqual(engine.log.play.map((p) => p.id), ['attack/knight']);
   assert.deepEqual(engine.log.alarm, []);

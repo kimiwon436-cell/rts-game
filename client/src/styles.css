@@ -315,6 +315,8 @@ button, input { font: inherit; color: inherit; }
 .c-wood { color: #c69157; }
 .c-mana { color: #8fb6ff; }
 .cc-btn.is-short .cc-cost span { color: #f08a80; }
+.cc-btn.is-danger { border-color: #a8443c; background: #3b1f1c; }
+.cc-btn.is-danger .cc-label { color: #ffb4aa; }
 .hud-banner.is-danger { border-color: #7a3630; color: #f08a80; }
 
 /* ---------- 항복 확인과 경기 결과 ---------- */

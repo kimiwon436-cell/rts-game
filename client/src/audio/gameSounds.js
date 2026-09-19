@@ -107,12 +107,6 @@ export function createGameSounds({ engine, world, alarms = true, now = () => per
       case GAME_EVENT.OATH_TAKEN:
         alarm('oath');
         break;
-      case GAME_EVENT.CROWN_FALLING:
-        alarm(world.teamOf(event[1]) === myTeam() ? 'crown_falling' : 'enemy_crown_falling');
-        break;
-      case GAME_EVENT.CROWN_RESTORED:
-        if (world.teamOf(event[1]) === myTeam()) alarm('crown_restored');
-        break;
       case GAME_EVENT.PLAYER_DEFEATED:
         // 1대1에서는 곧 경기가 끝나 결과 화면이 알리고, 내가 쓰러진 것도 화면이 알린다
         if (!teamGame || event[1] === world.mySlot) break;

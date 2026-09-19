@@ -305,6 +305,26 @@ export function drawEffect(ctx, effect, now) {
     return true;
   }
 
+  if (effect.kind === 'dismantle') {
+    const half = (effect.size * S) / 2;
+    ctx.fillStyle = `rgba(196, 176, 140, ${0.5 * (1 - t)})`;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * TAU + 0.4;
+      circle(ctx, x + Math.cos(a) * half * (0.3 + t * 0.7), y + Math.sin(a) * half * 0.45 * (0.3 + t * 0.7) - t * 10, 7 + t * 12);
+    }
+    // 돌려받은 금화가 위로 튄다
+    for (let i = 0; i < 5; i++) {
+      const k = Math.min(1, t * 1.4 + i * 0.04);
+      const px = x + (i - 2) * half * 0.22;
+      const py = y - half * 0.2 - Math.sin(Math.PI * k) * 26 - i * 2;
+      ctx.fillStyle = `rgba(242, 196, 70, ${1 - t})`;
+      circle(ctx, px, py, 2.6);
+      ctx.fillStyle = `rgba(255, 244, 200, ${1 - t})`;
+      circle(ctx, px - 0.8, py - 0.8, 0.9);
+    }
+    return true;
+  }
+
   if (effect.kind === 'rubble') {
     const half = (effect.size * S) / 2;
     ctx.fillStyle = `rgba(52, 46, 40, ${0.75 * (1 - t)})`;

@@ -54,7 +54,7 @@ export class ClientWorld {
     this.me = null;
     this.allies = new Map(); // 팀원 slot → { gold, wood, mana } (팀전)
     this.ages = new Map(); // slot → age
-    this.publicPlayers = new Map(); // slot → { age, collapseSeconds, defeated }
+    this.publicPlayers = new Map(); // slot → { age, defeated, oath, team }
     /** 전투 효과 (투사체·타격·쓰러짐). 렌더러가 시간이 지난 것을 지운다 */
     this.effects = [];
     this.tick = -1;
@@ -256,6 +256,13 @@ export class ClientWorld {
       if (building) {
         const { x, y } = centerOf(building);
         this.effects.push({ kind: 'rubble', x, y, size: building.size, start: now, duration: 1600 });
+      }
+    } else if (event[0] === GAME_EVENT.BUILDING_SOLD) {
+      // 팔린 건물은 무너지지 않고 흙먼지 속에 걷히며 금화가 튄다
+      const building = removed.get(event[1]);
+      if (building) {
+        const { x, y } = centerOf(building);
+        this.effects.push({ kind: 'dismantle', x, y, size: building.size, start: now, duration: 1100 });
       }
     }
   }

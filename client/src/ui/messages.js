@@ -53,6 +53,8 @@ const MESSAGES = {
   // 해군
   [REJECT.NO_LANDING]: '뭍에 더 가까이 대야 내릴 수 있습니다.',
   [REJECT.NEEDS_COAST]: '조선소는 바다와 이어진 물가에 지어야 합니다.',
+  // 건물
+  [REJECT.CANNOT_SELL]: '영주관은 팔 수 없습니다. 영주관이 무너지면 그 자리에서 집니다.',
 };
 
 export const errorMessage = (code) => MESSAGES[code] ?? `알 수 없는 오류입니다 (${code})`;

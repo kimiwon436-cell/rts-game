@@ -8,7 +8,7 @@ import { TERRAIN } from '@rune/shared/map/grid.js';
 import { CMD, GAME_EVENT, REJECT, UNIT_STATE, VICTORY_REASON } from '@rune/shared/protocol.js';
 import { computeDamage } from '@rune/shared/rules/combat.js';
 import { PLACE, checkPlacement } from '@rune/shared/rules/placement.js';
-import { missingResource } from '@rune/shared/rules/costs.js';
+import { canSell, missingResource, sellRefund } from '@rune/shared/rules/costs.js';
 import { orderGather, orderReturnCargo } from './gathering.js';
 import { cancelConstruction, orderConstruct } from './construction.js';
 import { defeatPlayer } from './victory.js';
@@ -72,6 +72,8 @@ function applyCommand(world, slot, cmd) {
       return construct(world, slot, cmd);
     case CMD.CANCEL_BUILD:
       return cancelBuild(world, slot, cmd);
+    case CMD.SELL_BUILDING:
+      return sellBuilding(world, slot, cmd);
     case CMD.AGE_UP:
       return ageUp(world, slot);
     case CMD.CANCEL_AGE_UP:
@@ -132,7 +134,8 @@ function move(world, slot, { unitIds, x, y }, attacking = false) {
   for (const domain of ['land', 'water', 'air']) {
     const group = units.filter((u) => domainOf(u.type) === domain);
     if (!group.length) continue;
-    const nav = world.navOf(group[0]);
+    // 목적지는 서 있을 자리에서 고른다: 우리 건물 안으로 지나갈 수는 있어도 그 안에 멈춰 서지는 않는다
+    const nav = world.navForType(group[0].type);
     const slots = world.destinationSlots(x, y, group.length, nav, nav === world.waterNav ? NAVAL_TARGET_SEARCH : 12);
     if (!slots.length) continue;
 
@@ -420,6 +423,27 @@ function cancelBuild(world, slot, cmd) {
   const building = world.buildings.get(cmd.buildingId);
   if (!building || building.owner !== slot || building.complete) return REJECT.INVALID_TARGET;
   cancelConstruction(world, building);
+  return null;
+}
+
+/**
+ * 건물 판매: 완성된 내 건물을 허물고 비용의 절반 × 남은 체력만큼 돌려받는다.
+ * 생산 대기열은 취소한 것처럼 전액 돌려준다. 영주관은 팔 수 없다 (무너지면 지는 건물이다)
+ */
+function sellBuilding(world, slot, { buildingId }) {
+  const building = world.buildings.get(buildingId);
+  if (!building || building.owner !== slot || !building.complete || building.hp <= 0) return REJECT.INVALID_TARGET;
+  if (!canSell(building.type)) return REJECT.CANNOT_SELL;
+
+  const player = world.players[slot];
+  const refund = sellRefund(building.type, building.hp / building.maxHp);
+  for (const item of building.queue) {
+    for (const resource of RESOURCES) refund[resource] += UNITS[item.type].cost[resource] ?? 0;
+  }
+  building.queue = [];
+  for (const resource of RESOURCES) player[resource] += refund[resource];
+  world.removeBuilding(building);
+  world.events.push([GAME_EVENT.BUILDING_SOLD, building.id, slot, ...RESOURCES.map((resource) => refund[resource])]);
   return null;
 }
 

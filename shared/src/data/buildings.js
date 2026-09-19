@@ -15,7 +15,7 @@ export const BUILDINGS = Object.freeze({
     pop: 10,
     dropoff: ['gold', 'wood'],
     trains: ['peasant'],
-    hotkey: 'D',
+    unique: true, // 한 사람에 하나: 새로 짓지도 팔지도 못한다. 무너지면 그 자리에서 진다
   },
   farmstead: {
     id: 'farmstead',
@@ -156,10 +156,13 @@ export const BUILDINGS = Object.freeze({
 /** 건물 하나의 생산 대기열 최대 길이 */
 export const PRODUCTION_QUEUE_MAX = 5;
 
+/** 건물을 팔면 돌려받는 몫: 비용 × 이 비율 × 남은 체력 비율 (rules/costs.js의 sellRefund) */
+export const SELL_REFUND = 0.5;
+
 /** 스냅샷에서 건물 종류를 숫자로 보낼 때 쓰는 순서 */
 export const BUILDING_TYPES = Object.freeze(Object.keys(BUILDINGS));
 
-/** 농노 명령 카드에 나오는 건설 목록 순서 */
+/** 농노 명령 카드에 나오는 건설 목록 순서 (영주관은 없다: 시작할 때 하나뿐이다) */
 export const BUILD_MENU = Object.freeze([
   'farmstead',
   'storehouse',
@@ -167,7 +170,6 @@ export const BUILD_MENU = Object.freeze([
   'stables',
   'obelisk',
   'watchtower',
-  'keep',
   'mage_tower',
   'market',
   'sanctum',

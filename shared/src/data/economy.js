@@ -38,5 +38,8 @@ export const TRIBUTE = Object.freeze({ fee: 0.1, amounts: Object.freeze([100, 50
 /** amount를 보내면 받는 쪽에 도착하는 양 */
 export const tributeReceived = (amount) => Math.floor(amount * (1 - TRIBUTE.fee));
 
-/** 여러 농노가 함께 지을 때의 속도 배율: 1명 1배, 2명 1.33배, 3명 1.67배 */
-export const buildSpeedMultiplier = (builders) => (builders <= 0 ? 0 : (builders + 2) / 3);
+/**
+ * 여러 농노가 함께 지을 때의 속도 배율: 농노가 많을수록 빨라지되 한 명당 효과는 조금씩 준다 (명^0.8)
+ * 1명 1배 · 2명 1.7배 · 3명 2.4배 · 4명 3배 · 6명 4.2배 · 8명 5.3배
+ */
+export const buildSpeedMultiplier = (builders) => (builders <= 0 ? 0 : builders ** 0.8);
