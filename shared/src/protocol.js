@@ -84,12 +84,13 @@ export const CMD = Object.freeze({
   BOARD: 'board', // { unitIds, targetId } — 아르카논 등에 태우기
   TAKE_OATH: 'takeOath', // { oath: 'crown' | 'rune' | 'earth' } — 한 경기에 한 번
   SEND_RESOURCES: 'sendResources', // { to: 팀원 슬롯, resource: 'gold' | 'wood' | 'mana', amount } — 수수료를 떼고 도착한다
+  SELL_BUILDING: 'sellBuilding', // { buildingId } — 완성된 내 건물을 허물고 비용 일부를 돌려받는다 (영주관은 못 판다)
   SURRENDER: 'surrender', // {}
 });
 
 /** 경기가 끝난 이유 */
 export const VICTORY_REASON = Object.freeze({
-  CONQUEST: 'conquest', // 왕관 몰락 카운트다운이 끝났다
+  CONQUEST: 'conquest', // 영주관이 무너졌다 (왕관 몰락)
   ANNIHILATION: 'annihilation', // 유닛도 건물도 남지 않았다
   SURRENDER: 'surrender',
   LEFT: 'left', // 경기 중에 나갔다
@@ -119,6 +120,7 @@ export const REJECT = Object.freeze({
   GARRISON_FULL: 'GARRISON_FULL',
   CANNOT_BOARD: 'CANNOT_BOARD',
   NO_LANDING: 'NO_LANDING', // 배에서 내리려면 뭍 가까이 대야 한다
+  CANNOT_SELL: 'CANNOT_SELL', // 영주관은 팔 수 없다
   // 배치 판정 (shared/src/rules/placement.js의 PLACE와 같은 값)
   OUT_OF_BOUNDS: 'OUT_OF_BOUNDS',
   BLOCKED: 'BLOCKED',
@@ -148,12 +150,13 @@ export const GAME_EVENT = Object.freeze({
   ATTACK: 6, // [code, attackerId, targetId] — 공격 모션·투사체용
   UNIT_DIED: 7, // [code, unitId]
   BUILDING_DESTROYED: 8, // [code, buildingId]
-  CROWN_FALLING: 9, // [code, ownerSlot] — 영주관을 모두 잃어 왕관 몰락 카운트다운 시작
-  CROWN_RESTORED: 10, // [code, ownerSlot] — 영주관을 다시 지어 카운트다운 취소
+  CROWN_FALLING: 9, // 더는 보내지 않는다 (예전 왕관 몰락 카운트다운. 번호는 예전 리플레이 때문에 비워 둔다)
+  CROWN_RESTORED: 10, // 더는 보내지 않는다 (위와 같다)
   PLAYER_DEFEATED: 11, // [code, ownerSlot]
   OATH_TAKEN: 12, // [code, ownerSlot, oathIndex] — 전역 공지
   ABILITY: 13, // [code, unitId, abilityIndex, x16, y16] — 능력 사용 효과 (x·y는 대상 지점)
   ULTIMATE_REVIVED: 14, // [code, unitId, ownerSlot] — 솔라리온 부활
   ULTIMATE_LOST: 15, // [code, ownerSlot, unitTypeIndex] — 궁극 유닛이 쓰러졌다
   RESOURCES_SENT: 16, // [code, fromSlot, toSlot, resourceIndex, sent, received] — 보낸 사람의 팀에게만
+  BUILDING_SOLD: 17, // [code, buildingId, ownerSlot, gold, wood, mana] — 건물을 팔았다 (돌려받은 자원)
 });

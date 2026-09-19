@@ -102,9 +102,12 @@ function resolvePair(world, a, b) {
   nudge(world, b, dx * push * (1 - aShare) - sx, dy * push * (1 - aShare) - sy);
 }
 
-/** 축마다 따로 옮겨서 벽에 닿으면 그 축만 멈춘다 (벽을 따라 미끄러진다) */
+/**
+ * 축마다 따로 옮겨서 벽에 닿으면 그 축만 멈춘다 (벽을 따라 미끄러진다).
+ * 건물은 우리 팀 것도 벽으로 본다: 밀려서 건물 안으로 들어가지는 않는다 (걸어서 지나가는 것은 된다)
+ */
 function nudge(world, unit, dx, dy) {
-  const nav = world.navOf(unit);
+  const nav = world.navForType(unit.type);
   const nx = unit.x + dx;
   if (!nav.isBlocked(Math.floor(nx), Math.floor(unit.y))) unit.x = nx;
   const ny = unit.y + dy;

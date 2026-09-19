@@ -17,7 +17,7 @@ function runSeconds(world, seconds) {
   for (let i = 0; i < Math.round(seconds / TICK_SECONDS); i++) stepWorld(world);
 }
 
-test('영주관을 모두 잃으면 왕관 몰락이 시작되고, 영주관을 다시 완성하면 취소된다', () => {
+test('영주관이 무너지면 그 자리에서 지고 상대가 이긴다 (왕관 몰락)', () => {
   const world = newWorld();
   const keep = keepOf(world, 1);
   keep.hp = 0;
@@ -25,25 +25,19 @@ test('영주관을 모두 잃으면 왕관 몰락이 시작되고, 영주관을 
   const { events } = stepWorld(world);
   assert.ok(!world.buildings.has(keep.id));
   assert.ok(events.some(([code, id]) => code === GAME_EVENT.BUILDING_DESTROYED && id === keep.id));
-  assert.ok(hasEvent(events, GAME_EVENT.CROWN_FALLING, 1));
-  assert.notEqual(world.players[1].collapseAt, null);
-
-  world.spawnBuilding('keep', 1, keep.x, keep.y, { complete: true });
-  const { events: after } = stepWorld(world);
-  assert.ok(hasEvent(after, GAME_EVENT.CROWN_RESTORED, 1));
-  assert.equal(world.players[1].collapseAt, null);
-});
-
-test('왕관 몰락 120초가 지나면 패배하고 상대가 이긴다', () => {
-  const world = newWorld();
-  keepOf(world, 1).hp = 0;
-
-  runSeconds(world, 119);
-  assert.equal(world.result, null, '120초 전에 끝났다');
-  runSeconds(world, 2);
+  assert.ok(hasEvent(events, GAME_EVENT.PLAYER_DEFEATED, 1));
+  assert.equal(world.players[1].defeated, true);
   assert.equal(world.result?.winnerTeam, 0);
   assert.equal(world.result?.reason, VICTORY_REASON.CONQUEST);
+});
+
+test('유닛이 아무리 많아도 영주관이 없으면 진다', () => {
+  const world = newWorld();
+  for (let i = 0; i < 10; i++) world.spawnUnit('knight', 1, 60.5, 20.5 + i);
+  keepOf(world, 1).hp = 0;
+  runSeconds(world, 0.2);
   assert.equal(world.players[1].defeated, true);
+  assert.equal(world.result?.reason, VICTORY_REASON.CONQUEST);
 });
 
 test('항복하면 바로 지고 상대가 이긴다', () => {

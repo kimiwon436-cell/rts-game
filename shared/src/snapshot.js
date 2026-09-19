@@ -5,7 +5,6 @@
 // { t, full?, players?, addU?, updU?, addB?, updB?, del?, mines?, ev?, me?, own?, allies? }
 // me·own·allies는 받는 플레이어의 것만 들어 있고, 바뀌지 않은 항목은 아예 오지 않는다.
 
-import { TICK_MS } from './constants.js';
 import { UNIT_TYPES } from './data/units.js';
 import { BUILDING_TYPES } from './data/buildings.js';
 import { ABILITY_IDS } from './data/abilities.js';
@@ -102,17 +101,18 @@ export function decodeFlags(flags) {
   };
 }
 
-/** 모두에게 보이는 플레이어 정보: [slot, 시대, 왕관 몰락까지 남은 초(없으면 -1), 패배 0|1, 맹세(없으면 -1), 팀] */
-export function encodePublicPlayer(p, tick) {
-  const collapseSeconds = p.collapseAt == null ? -1 : Math.max(0, Math.ceil(((p.collapseAt - tick) * TICK_MS) / 1000));
-  return [p.slot, p.age, collapseSeconds, p.defeated ? 1 : 0, p.oath ? OATH_IDS.indexOf(p.oath) : -1, p.team ?? p.slot];
+/**
+ * 모두에게 보이는 플레이어 정보: [slot, 시대, -1, 패배 0|1, 맹세(없으면 -1), 팀]
+ * 세 번째 칸은 예전 왕관 몰락 카운트다운 자리다 (이제 영주관이 무너지면 바로 진다). 형식을 바꾸지 않으려고 비워 둔다
+ */
+export function encodePublicPlayer(p) {
+  return [p.slot, p.age, -1, p.defeated ? 1 : 0, p.oath ? OATH_IDS.indexOf(p.oath) : -1, p.team ?? p.slot];
 }
 
 export function decodePublicPlayer(a) {
   return {
     slot: a[0],
     age: a[1],
-    collapseSeconds: a[2] < 0 ? null : a[2],
     defeated: Boolean(a[3]),
     oath: a[4] >= 0 ? OATH_IDS[a[4]] : null,
     team: a[5] ?? a[0],

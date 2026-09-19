@@ -1,8 +1,4 @@
-import { TICK_MS } from '@rune/shared/constants.js';
 import { GAME_EVENT, VICTORY_REASON } from '@rune/shared/protocol.js';
-
-export const COLLAPSE_SECONDS = 120;
-const COLLAPSE_TICKS = Math.round((COLLAPSE_SECONDS * 1000) / TICK_MS);
 
 /**
  * 플레이어를 패배 처리한다. 항복·이탈에도 쓴다.
@@ -13,7 +9,6 @@ export function defeatPlayer(world, player, reason) {
   if (player.defeated) return;
   player.defeated = true;
   player.defeatReason = reason;
-  player.collapseAt = null;
   player.revive = null;
   world.lastDefeatReason = reason;
   world.events.push([GAME_EVENT.PLAYER_DEFEATED, player.slot]);
@@ -23,8 +18,8 @@ export function defeatPlayer(world, player, reason) {
 
 /**
  * 정복 승리 판정 (docs/GAME_DESIGN.md 6장)
- * - 완성된 영주관이 하나도 없으면 '왕관 몰락' 120초 카운트다운. 그 안에 영주관을 다시 완공하면 취소된다
- * - 카운트다운이 끝나거나, 유닛도 건물도 하나 남지 않으면 그 플레이어가 패배
+ * - 영주관은 한 사람에 하나뿐이다 (새로 짓지도 팔지도 못한다). 영주관이 무너지면 그 자리에서 패배 ('왕관 몰락')
+ * - 유닛도 건물도 하나 남지 않아도 패배
  * - 한 팀의 플레이어가 모두 패배하면 남은 팀이 이긴다 (1대1은 팀원이 한 명씩인 팀전)
  */
 export function updateVictory(world) {
@@ -42,19 +37,8 @@ export function updateVictory(world) {
   for (const player of world.players) {
     if (!player || player.defeated) continue;
     const { keep, anything } = holdings.get(player.slot);
-    if (!anything) {
-      defeatPlayer(world, player, VICTORY_REASON.ANNIHILATION);
-    } else if (keep) {
-      if (player.collapseAt != null) {
-        player.collapseAt = null;
-        world.events.push([GAME_EVENT.CROWN_RESTORED, player.slot]);
-      }
-    } else if (player.collapseAt == null) {
-      player.collapseAt = world.tick + COLLAPSE_TICKS;
-      world.events.push([GAME_EVENT.CROWN_FALLING, player.slot]);
-    } else if (world.tick >= player.collapseAt) {
-      defeatPlayer(world, player, VICTORY_REASON.CONQUEST);
-    }
+    if (!anything) defeatPlayer(world, player, VICTORY_REASON.ANNIHILATION);
+    else if (!keep) defeatPlayer(world, player, VICTORY_REASON.CONQUEST);
   }
 
   const players = world.players.filter(Boolean);
