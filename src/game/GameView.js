@@ -1,0 +1,1154 @@
+import { PLAYER_COLORS, TILE_SIZE } from '@rune/shared/constants.js';
+import { BUILDINGS } from '@rune/shared/data/buildings.js';
+import { AGES, RESOURCES, RESOURCE_NAMES, TRIBUTE, tributeReceived } from '@rune/shared/data/economy.js';
+import { UNITS } from '@rune/shared/data/units.js';
+import { ABILITIES } from '@rune/shared/data/abilities.js';
+import { canBoard, garrisonOf } from '@rune/shared/rules/garrison.js';
+import { OATHS, OATH_IDS } from '@rune/shared/data/oaths.js';
+import { loadMap } from '@rune/shared/map/maps/index.js';
+import { TERRAIN, TERRAIN_NAMES, footprintCenter } from '@rune/shared/map/grid.js';
+import { CMD, EV, GAME_EVENT, REJECT, VICTORY_REASON } from '@rune/shared/protocol.js';
+import { PLACE, checkPlacement } from '@rune/shared/rules/placement.js';
+import { canSell, missingResource } from '@rune/shared/rules/costs.js';
+import { h } from '../ui/dom.js';
+import { toast } from '../ui/toast.js';
+import { errorMessage } from '../ui/messages.js';
+import { createCommandCard } from '../ui/commandCard.js';
+import { createChatBox } from '../ui/chatBox.js';
+import { ClientWorld } from '../world/ClientWorld.js';
+import { Camera } from '../render/Camera.js';
+import { Renderer } from '../render/Renderer.js';
+import { Minimap } from '../render/minimap.js';
+import { Input } from '../input/Input.js';
+import { TouchControls, isCoarsePointer } from '../input/TouchControls.js';
+import { downloadReplay } from './replayFile.js';
+import { sound } from '../audio/soundEngine.js';
+import { createGameSounds } from '../audio/gameSounds.js';
+import { SOUNDS } from '../audio/soundList.js';
+import { createSoundControl } from '../ui/soundControl.js';
+
+const PAN_SPEED = 1100; // 화면 픽셀/초
+const DRAG_THRESHOLD = 5;
+const WELL_SNAP_RADIUS = 4;
+const NOT_ENOUGH = { gold: REJECT.NOT_ENOUGH_GOLD, wood: REJECT.NOT_ENOUGH_WOOD, mana: REJECT.NOT_ENOUGH_MANA };
+
+/** 경기가 끝난 이유. team이면 "상대 팀" / "우리 팀" 기준으로 말한다 (마지막으로 진 사람의 이유다) */
+function endReason(reason, won, team) {
+  const them = team ? '상대 팀이' : '상대가';
+  const us = team ? '우리 팀이' : '';
+  switch (reason) {
+    case VICTORY_REASON.SURRENDER:
+      return won ? `${them} 항복했습니다` : `${us} 항복했습니다`.trim();
+    case VICTORY_REASON.LEFT:
+      return won ? `${them} 경기를 떠났습니다` : '경기를 떠났습니다';
+    case VICTORY_REASON.ANNIHILATION:
+      return won ? `${them} 가진 유닛과 건물을 모두 무너뜨렸습니다` : '유닛과 건물을 모두 잃었습니다';
+    default:
+      return won ? `${them === '상대가' ? '상대의' : '상대 팀의'} 영주관을 무너뜨렸습니다` : '영주관이 무너졌습니다';
+  }
+}
+
+/**
+ * 게임 화면: 스냅샷을 받아 그리고, 선택·우클릭 명령·건물 배치를 서버에 보낸다.
+ * 규칙 판정은 서버가 한다. 클라이언트의 배치 판정은 미리보기용이다.
+ */
+export function createGameView({
+  canvas,
+  socket,
+  mapId,
+  players,
+  me,
+  recorder,
+  ranked = false,
+  chatMessages = [],
+  onSendChat = async () => {},
+  tutorial = false, // 튜토리얼: 항복·채팅 없이, 안내 패널이 나가기 버튼을 맡는다
+  onLeave,
+  onReturnToRoom,
+}) {
+  const map = loadMap(mapId);
+  const mySlot = players.find((p) => p.uid === me.uid)?.slot ?? 0;
+
+  const world = new ClientWorld(map, mySlot, players);
+  const myTeam = players.find((p) => p.slot === mySlot)?.team ?? mySlot;
+  const teamGame = players.length > 2;
+  const camera = new Camera(map.width * TILE_SIZE, map.height * TILE_SIZE);
+  const renderer = new Renderer(canvas, world, camera, players);
+  const minimap = new Minimap(world, camera, { fog: renderer.fog });
+  const input = new Input(canvas);
+  const touchMode = isCoarsePointer();
+  const commandCard = createCommandCard({ onAction });
+  const selection = renderer.selection;
+  const sounds = createGameSounds({ engine: sound, world });
+  sound.preload(Object.keys(SOUNDS).filter((id) => !id.startsWith('bgm/'))); // 효과음·알람은 작으니 미리 받아 둔다
+
+  let seq = 0;
+  let placing = null; // 배치 중인 건물 종류
+  let targeting = false; // 공격 이동 지점을 고르는 중 (A 뒤 클릭)
+  let casting = null; // 능력 쓸 지점을 고르는 중 { ability, unitIds }
+  let sellConfirm = { id: null, until: 0 }; // 판매는 두 번 눌러야 한다: 첫 번째 누른 건물과 기다리는 시각
+  const SELL_CONFIRM_MS = 3000;
+  let ended = false;
+  let press = null; // 왼쪽 버튼을 누른 위치 { x, y, shift }
+  let lastClick = { time: 0, unitId: null }; // 더블클릭 판정
+
+  const send = (cmd) => socket.emit(EV.GAME_CMD, { seq: ++seq, ...cmd });
+  const toTile = (sx, sy) => {
+    const w = camera.screenToWorld(sx, sy);
+    return { x: w.x / TILE_SIZE, y: w.y / TILE_SIZE };
+  };
+
+  // ---------- 서버 ----------
+
+  const onSnapshot = (snap) => {
+    recorder?.add(snap);
+    world.applySnapshot(snap);
+    for (const id of selection) {
+      const alive = typeof id === 'string' ? world.mineAmounts.has(id) : world.units.has(id) || world.buildings.has(id);
+      if (!alive || world.units.get(id)?.carried) selection.delete(id); // 쓰러졌거나 등에 탔다
+    }
+    if (placing && selectedWorkerIds().length === 0) cancelPlacing();
+    if (targeting && selectedOwnUnits().length === 0) targeting = false;
+  };
+  // Shift로 5기를 한꺼번에 명령하면 같은 거부가 여러 번 올 수 있어 잠깐 동안 한 번만 알린다
+  let lastReject = { reason: null, at: 0 };
+  const onReject = ({ reason }) => {
+    const now = performance.now();
+    if (reason === lastReject.reason && now - lastReject.at < 1000) return;
+    lastReject = { reason, at: now };
+    reject(reason);
+  };
+  /** 명령이 안 된다고 알린다 (글과 알람) */
+  function reject(reason) {
+    toast(errorMessage(reason), { error: true });
+    sounds.onReject(reason);
+  }
+  const onEnd = (result) => showResult(result);
+  // 내 연결이 끊긴 동안은 화면이 멈춘다. 소켓이 스스로 다시 붙고, 붙으면 서버가 GAME_RESUME으로 이어 준다.
+  const onOffline = () => {
+    netBanner.textContent = '서버와 연결이 끊겼습니다. 다시 연결하는 중…';
+    netBanner.hidden = false;
+  };
+  const onOnline = () => {
+    netBanner.hidden = true;
+  };
+  socket.on(EV.GAME_SNAP, onSnapshot);
+  socket.on(EV.GAME_REJECT, onReject);
+  socket.on(EV.GAME_END, onEnd);
+  socket.on('disconnect', onOffline);
+  socket.on('connect', onOnline);
+
+  world.onTreeFelled = (tile) => {
+    renderer.terrain.invalidateTile(tile % map.width, Math.floor(tile / map.width));
+    minimap.markTerrainDirty();
+  };
+  world.onTerrainReset = () => {
+    renderer.terrain.invalidateAll();
+    minimap.markTerrainDirty();
+  };
+  world.onEvent = (event, removed) => {
+    sounds.onEvent(event, removed);
+    if (event[0] === GAME_EVENT.BUILT && event[2] === mySlot) {
+      const building = world.buildings.get(event[1]);
+      if (building) toast(`${BUILDINGS[building.type].name}을(를) 다 지었습니다.`);
+    } else if (event[0] === GAME_EVENT.AGE_UP && event[1] === mySlot) {
+      toast(`${AGES[event[2]].name}에 들어섰습니다.`);
+    } else if (event[0] === GAME_EVENT.OATH_TAKEN) {
+      // 맹세는 전역 공지다: 상대도 대비할 시간을 준다
+      const oath = OATHS[OATH_IDS[event[2]]];
+      const who = event[1] === mySlot ? '내' : `${playerName(event[1])}의`;
+      announce(`${who} 왕국이 ${oath.name}를 맺었습니다 — ${UNITS[oath.unit].name}`);
+    } else if (event[0] === GAME_EVENT.PLAYER_DEFEATED && teamGame && !ended) {
+      const slot = event[1];
+      const who = slot === mySlot ? '내가' : `${playerName(slot)}이(가)`;
+      const side = slot === mySlot ? '' : world.teamOf(slot) === myTeam ? ' (우리 팀)' : ' (상대 팀)';
+      toast(`${who} 쓰러졌습니다${side}. 기지가 무너집니다.`, { error: world.teamOf(slot) === myTeam });
+    } else if (event[0] === GAME_EVENT.ULTIMATE_REVIVED) {
+      const unit = world.units.get(event[1]);
+      if (event[2] === mySlot) toast(`${UNITS[unit?.type ?? 'solarion'].name}이(가) 다시 일어섰습니다.`);
+    } else if (event[0] === GAME_EVENT.ULTIMATE_LOST) {
+      const name = UNITS[event[2]]?.name ?? '궁극 유닛';
+      if (event[1] === mySlot) toast(`${name}이(가) 쓰러졌습니다.`, { error: true });
+      else toast(`적의 ${name}을(를) 쓰러뜨렸습니다.`);
+    } else if (event[0] === GAME_EVENT.BUILDING_SOLD && event[2] === mySlot) {
+      const sold = removed?.get(event[1]);
+      const refund = RESOURCES.map((resource, i) => [RESOURCE_NAMES[resource], event[3 + i]]).filter(([, n]) => n > 0);
+      const gain = refund.map(([name, n]) => `${name} +${n}`).join(' · ');
+      toast(`${sold ? BUILDINGS[sold.type].name : '건물'}을(를) 팔았습니다${gain ? ` (${gain})` : ''}.`);
+    } else if (event[0] === GAME_EVENT.RESOURCES_SENT) {
+      // 서버는 이 이벤트를 보낸 사람의 팀에게만 보낸다
+      const [, from, to, resourceIndex, sent, received] = event;
+      const name = RESOURCE_NAMES[RESOURCES[resourceIndex]];
+      const count = (n) => n.toLocaleString('ko-KR');
+      if (from === mySlot) toast(`${playerName(to)}에게 ${name} ${count(sent)}을(를) 보냈습니다 (${count(received)} 도착).`);
+      else if (to === mySlot) toast(`${playerName(from)}이(가) ${name} ${count(received)}을(를) 보내 왔습니다.`);
+      chat.add({
+        id: `tribute-${world.tick}-${from}-${to}-${resourceIndex}`,
+        scope: 'team',
+        text: `${playerName(from)} → ${playerName(to)}: ${name} ${count(received)}`,
+        at: Date.now(),
+        from: null,
+      });
+    }
+  };
+
+  const playerName = (slot) => players.find((p) => p.slot === slot)?.nickname ?? `P${slot + 1}`;
+
+  /** 양쪽 모두에게 크게 알리는 공지 (맹세 선언) */
+  function announce(text) {
+    banner.textContent = text;
+    banner.hidden = false;
+    clearTimeout(announceTimer);
+    announceTimer = setTimeout(() => {
+      banner.hidden = true;
+    }, 6000);
+  }
+  let announceTimer = null;
+
+  // ---------- 선택 ----------
+
+  function setSelection(ids) {
+    selection.clear();
+    ids.forEach((id) => selection.add(id));
+  }
+
+  const selectedOwnUnits = () =>
+    [...selection].map((id) => world.units.get(id)).filter((u) => u && world.isMine(u));
+
+  function selectedWorkerIds() {
+    return selectedOwnUnits()
+      .filter((u) => UNITS[u.type].worker)
+      .map((u) => u.id);
+  }
+
+  const selectionIsOwnUnits = () => selection.size > 0 && selectedOwnUnits().length === selection.size;
+
+  function selectAt(t, shift) {
+    const unit = world.unitAt(t.x, t.y);
+    if (unit) {
+      if (shift && world.isMine(unit) && selectionIsOwnUnits()) {
+        if (selection.has(unit.id)) selection.delete(unit.id);
+        else selection.add(unit.id);
+      } else {
+        setSelection([unit.id]);
+      }
+      return;
+    }
+    if (shift) return;
+    const tx = Math.floor(t.x);
+    const ty = Math.floor(t.y);
+    const building = world.buildingAt(tx, ty);
+    const mine = building ? null : world.mineAt(tx, ty);
+    setSelection(building ? [building.id] : mine ? [mine.id] : []);
+  }
+
+  function selectBox(box, shift) {
+    const a = toTile(box.x0, box.y0);
+    const b = toTile(box.x1, box.y1);
+    const ids = world.myUnitsInRect(a.x, a.y, b.x, b.y).map((u) => u.id);
+    if (shift && selectionIsOwnUnits()) ids.push(...selection);
+    if (ids.length || !shift) setSelection(ids);
+  }
+
+  // ---------- 명령 ----------
+
+  /** 그 지점의 적 유닛이나 적 건물 */
+  function enemyAt(t) {
+    const unit = world.unitAt(t.x, t.y);
+    if (unit && world.isEnemy(unit)) return unit;
+    const building = world.buildingAt(Math.floor(t.x), Math.floor(t.y));
+    return building && world.isEnemy(building) ? building : null;
+  }
+
+  /** 공격 이동: 적을 찍으면 그 적을 공격, 땅을 찍으면 가며 만나는 적과 싸운다 */
+  function attackMoveAt(t) {
+    const unitIds = selectedOwnUnits().map((u) => u.id);
+    if (!unitIds.length) return;
+    const enemy = enemyAt(t);
+    if (enemy) send({ type: CMD.ATTACK, unitIds, targetId: enemy.id });
+    else send({ type: CMD.ATTACK_MOVE, unitIds, x: t.x, y: t.y });
+    renderer.addMarker(t.x, t.y, 'attack');
+  }
+
+  /** 내 생산 건물 하나만 골랐으면 그 건물 */
+  function selectedProductionBuilding() {
+    if (selection.size !== 1) return null;
+    const building = world.buildings.get([...selection][0]);
+    return building && world.isMine(building) && BUILDINGS[building.type].trains ? building : null;
+  }
+
+  function setRallyAt(building, t) {
+    const tx = Math.floor(t.x);
+    const ty = Math.floor(t.y);
+    const cmd = { type: CMD.SET_RALLY, buildingId: building.id, x: t.x, y: t.y };
+    const mine = world.mineAt(tx, ty);
+    if (mine) cmd.mineId = mine.id;
+    else if (world.terrainAt(tx, ty) === TERRAIN.TREE) cmd.tile = ty * map.width + tx;
+    send(cmd);
+    renderer.addMarker(t.x, t.y, cmd.mineId || cmd.tile !== undefined ? 'work' : 'move');
+  }
+
+  /** 화면에 보이는 내 유닛 중 같은 종류를 모두 고른다 (더블클릭) */
+  function selectSameTypeOnScreen(type, shift) {
+    const view = camera.visibleRect();
+    const ids = world
+      .myUnitsInRect(view.x / TILE_SIZE, view.y / TILE_SIZE, (view.x + view.w) / TILE_SIZE, (view.y + view.h) / TILE_SIZE)
+      .filter((u) => u.type === type)
+      .map((u) => u.id);
+    if (shift && selectionIsOwnUnits()) ids.push(...selection);
+    setSelection(ids);
+  }
+
+  function commandAt(t) {
+    const building = selectedProductionBuilding();
+    if (building) {
+      setRallyAt(building, t);
+      return;
+    }
+    const units = selectedOwnUnits();
+    if (!units.length) return;
+
+    // 내 아르카논·수송선을 우클릭하면 탄다 (수송선은 물가에 대 있어야 탈 수 있다)
+    const friend = world.unitAt(t.x, t.y);
+    if (friend && world.isMine(friend) && garrisonOf(friend.type) && units.some((u) => u.id !== friend.id)) {
+      const riders = units.filter((u) => canBoard(friend.type, u.type)).map((u) => u.id);
+      if (riders.length) {
+        send({ type: CMD.BOARD, unitIds: riders, targetId: friend.id });
+        renderer.addMarker(t.x, t.y, 'work');
+        return;
+      }
+    }
+
+    const enemy = enemyAt(t);
+    if (enemy) {
+      send({ type: CMD.ATTACK, unitIds: units.map((u) => u.id), targetId: enemy.id });
+      renderer.addMarker(t.x, t.y, 'attack');
+      return;
+    }
+    const tx = Math.floor(t.x);
+    const ty = Math.floor(t.y);
+    const workerIds = units.filter((u) => UNITS[u.type].worker).map((u) => u.id);
+
+    if (workerIds.length) {
+      const mine = world.mineAt(tx, ty);
+      if (mine) {
+        send({ type: CMD.GATHER, unitIds: workerIds, mineId: mine.id });
+        renderer.addMarker(t.x, t.y, 'work');
+        return;
+      }
+      if (world.terrainAt(tx, ty) === TERRAIN.TREE) {
+        send({ type: CMD.GATHER, unitIds: workerIds, tile: ty * map.width + tx });
+        renderer.addMarker(t.x, t.y, 'work');
+        return;
+      }
+      const building = world.buildingAt(tx, ty);
+      if (building && world.isMine(building)) {
+        if (!building.complete) {
+          send({ type: CMD.CONSTRUCT, unitIds: workerIds, buildingId: building.id });
+          renderer.addMarker(t.x, t.y, 'work');
+          return;
+        }
+        const accepts = BUILDINGS[building.type].dropoff ?? [];
+        const carriers = units.filter((u) => u.carryAmount > 0 && accepts.includes(u.carryKind));
+        if (carriers.length) {
+          send({ type: CMD.RETURN_CARGO, unitIds: carriers.map((u) => u.id) });
+          renderer.addMarker(t.x, t.y, 'work');
+          return;
+        }
+      }
+    }
+
+    send({ type: CMD.MOVE, unitIds: units.map((u) => u.id), x: t.x, y: t.y });
+    renderer.addMarker(t.x, t.y, 'move');
+  }
+
+  function onAction(action) {
+    switch (action.kind) {
+      case 'build':
+        startPlacing(action.type);
+        break;
+      case 'stop':
+        send({ type: CMD.STOP, unitIds: selectedOwnUnits().map((u) => u.id) });
+        break;
+      case 'ageUp':
+        send({ type: CMD.AGE_UP });
+        break;
+      case 'cancelAgeUp':
+        send({ type: CMD.CANCEL_AGE_UP });
+        break;
+      case 'cancelBuild':
+        send({ type: CMD.CANCEL_BUILD, buildingId: action.id });
+        break;
+      case 'sell': {
+        // 실수로 팔지 않게: 3초 안에 한 번 더 눌러야 판다
+        const now = performance.now();
+        if (sellConfirm.id === action.id && now < sellConfirm.until) {
+          send({ type: CMD.SELL_BUILDING, buildingId: action.id });
+          sellConfirm = { id: null, until: 0 };
+        } else {
+          sellConfirm = { id: action.id, until: now + SELL_CONFIRM_MS };
+          if (touchMode) toast('한 번 더 누르면 팝니다');
+        }
+        updateHud();
+        break;
+      }
+      case 'trade':
+        send({ type: CMD.TRADE, resource: action.resource, action: action.action });
+        break;
+      case 'train':
+        for (let i = 0; i < (action.repeat ?? 1); i++) {
+          send({ type: CMD.TRAIN, buildingId: action.buildingId, unit: action.unit });
+        }
+        break;
+      case 'cancelTrain':
+        send({ type: CMD.CANCEL_TRAIN, buildingId: action.buildingId, index: action.index });
+        break;
+      case 'attackMove':
+        cancelPlacing();
+        targeting = true;
+        if (touchMode) toast('공격 이동 — 갈 곳을 누르세요');
+        break;
+      case 'shieldWall':
+        send({ type: CMD.TOGGLE_ABILITY, unitIds: selectedOwnUnits().map((u) => u.id), ability: 'shieldWall' });
+        break;
+      case 'toggleAbility':
+        send({ type: CMD.TOGGLE_ABILITY, unitIds: selectedOwnUnits().map((u) => u.id), ability: action.ability });
+        break;
+      case 'cast':
+        send({ type: CMD.USE_ABILITY, unitIds: selectedOwnUnits().map((u) => u.id), ability: action.ability });
+        break;
+      case 'castTarget': {
+        // 땅을 찍어 쓰는 능력: 다음 클릭 지점으로 보낸다
+        const ids = selectedOwnUnits()
+          .filter((u) => UNITS[u.type].abilities?.includes(action.ability))
+          .map((u) => u.id);
+        if (!ids.length) break;
+        cancelPlacing();
+        targeting = false;
+        casting = { ability: action.ability, unitIds: ids };
+        toast(`${ABILITIES[action.ability].name} — 쓸 곳을 ${touchMode ? '누르세요' : '클릭하세요 (Esc 취소)'}`);
+        break;
+      }
+      case 'takeOath':
+        send({ type: CMD.TAKE_OATH, oath: action.oath });
+        break;
+      default:
+    }
+  }
+
+  // ---------- 건물 배치 ----------
+
+  function startPlacing(type) {
+    const missing = missingResource(world.me, BUILDINGS[type].cost);
+    if (missing) {
+      reject(NOT_ENOUGH[missing]);
+      return;
+    }
+    targeting = false;
+    casting = null;
+    placing = type;
+    if (touchMode) toast(`${BUILDINGS[type].name} — 지을 곳을 누른 채 끌어 맞추고 손을 떼세요`);
+  }
+
+  function cancelPlacing() {
+    placing = null;
+    renderer.ghost = null;
+  }
+
+  function updateGhost() {
+    if (!placing || !input.mouse.inside) {
+      renderer.ghost = null;
+      return;
+    }
+    const def = BUILDINGS[placing];
+    const t = toTile(input.mouse.x, input.mouse.y);
+    let x = Math.round(t.x - def.size / 2);
+    let y = Math.round(t.y - def.size / 2);
+    if (def.onWell) {
+      const well = nearestFreeWell(t);
+      if (well) ({ x, y } = well);
+    }
+    const result = checkPlacement({
+      type: placing,
+      x,
+      y,
+      map,
+      tiles: world.tiles,
+      occupied: world.getOccupied(),
+      isWellTaken: (id) => world.isWellTaken(id),
+    });
+    renderer.ghost = { type: placing, x, y, valid: result === PLACE.OK, reason: result };
+  }
+
+  function nearestFreeWell(t) {
+    let best = null;
+    let bestDistance = WELL_SNAP_RADIUS;
+    for (const well of map.wells) {
+      if (world.isWellTaken(well.id)) continue;
+      const d = Math.hypot(well.x + well.w / 2 - t.x, well.y + well.h / 2 - t.y);
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = well;
+      }
+    }
+    return best;
+  }
+
+  function placeGhost(keepPlacing) {
+    const ghost = renderer.ghost;
+    if (!ghost) return;
+    if (!ghost.valid) {
+      reject(ghost.reason);
+      return;
+    }
+    const unitIds = selectedWorkerIds();
+    if (!unitIds.length) {
+      reject(REJECT.NO_WORKER);
+      cancelPlacing();
+      return;
+    }
+    send({ type: CMD.PLACE, unitIds, building: ghost.type, x: ghost.x, y: ghost.y });
+    const size = BUILDINGS[ghost.type].size;
+    renderer.addMarker(ghost.x + size / 2, ghost.y + size / 2, 'place');
+    if (!keepPlacing || missingResource(world.me, BUILDINGS[ghost.type].cost)) cancelPlacing();
+  }
+
+  // ---------- 입력 ----------
+
+  input.handlers.down = (button, x, y, event) => {
+    if (!world.ready || ended) return;
+    if (button === 0) {
+      if (casting) {
+        const t = toTile(x, y);
+        send({ type: CMD.USE_ABILITY, unitIds: casting.unitIds, ability: casting.ability, x: t.x, y: t.y });
+        renderer.addMarker(t.x, t.y, 'attack');
+        casting = null;
+      } else if (targeting) {
+        attackMoveAt(toTile(x, y));
+        if (!event.shiftKey) targeting = false;
+      } else if (placing) {
+        placeGhost(event.shiftKey);
+      } else {
+        press = { x, y, shift: event.shiftKey };
+      }
+    } else if (button === 2) {
+      if (casting) casting = null;
+      else if (targeting) targeting = false;
+      else if (placing) cancelPlacing();
+      else commandAt(toTile(x, y));
+    }
+  };
+  input.handlers.move = (x, y) => {
+    if (press && Math.hypot(x - press.x, y - press.y) > DRAG_THRESHOLD) {
+      renderer.dragBox = { x0: press.x, y0: press.y, x1: x, y1: y };
+    }
+  };
+  input.handlers.up = (button, x, y) => {
+    if (button !== 0 || !press) return;
+    const { shift } = press;
+    const box = renderer.dragBox;
+    press = null;
+    renderer.dragBox = null;
+    if (box) {
+      selectBox(box, shift);
+      return;
+    }
+    const t = toTile(x, y);
+    const unit = world.unitAt(t.x, t.y);
+    const now = performance.now();
+    if (unit && world.isMine(unit) && unit.id === lastClick.unitId && now - lastClick.time < 350) {
+      selectSameTypeOnScreen(unit.type, shift);
+      lastClick = { time: 0, unitId: null };
+    } else {
+      selectAt(t, shift);
+      lastClick = { time: now, unitId: unit?.id ?? null };
+    }
+  };
+  // ---------- 터치 ----------
+  // 탭 하나로 고르기와 명령을 함께 한다: 내 것을 누르면 고르고, 병력을 고른 채 다른 곳을 누르면 명령한다.
+
+  let touchBox = null;
+  const touch = new TouchControls(canvas, {
+    onTap: (x, y) => tapAt(x, y),
+    onDoubleTap: (x, y) => {
+      const t = toTile(x, y);
+      const unit = world.unitAt(t.x, t.y);
+      if (unit && world.isMine(unit) && !casting && !targeting && !placing) selectSameTypeOnScreen(unit.type, false);
+      else tapAt(x, y);
+    },
+    onPan: (dx, dy) => camera.pan(-dx, -dy),
+    onZoom: (direction, x, y) => camera.zoomAt(direction, x, y),
+    onBox: (phase, x, y) => {
+      if (!world.ready || ended) return;
+      if (phase === 'start') {
+        touchBox = { x0: x, y0: y, x1: x, y1: y };
+      } else if (touchBox && phase === 'move') {
+        touchBox.x1 = x;
+        touchBox.y1 = y;
+      } else if (touchBox && phase === 'end') {
+        if (Math.hypot(touchBox.x1 - touchBox.x0, touchBox.y1 - touchBox.y0) > DRAG_THRESHOLD) selectBox(touchBox, false);
+        touchBox = null;
+      } else {
+        touchBox = null;
+      }
+      renderer.dragBox = touchBox ? { ...touchBox } : null;
+    },
+    // 건물을 놓는 중이면 손가락을 따라 미리보기가 움직이고, 떼는 자리에 짓는다
+    dragsGhost: () => Boolean(placing) && world.ready && !ended,
+    onGhost: (phase, x, y) => {
+      input.mouse.x = x;
+      input.mouse.y = y - (touchMode ? 48 : 0); // 손가락에 가려지지 않게 조금 위에 보여 준다
+      input.mouse.inside = phase === 'start' || phase === 'move';
+      if (phase === 'end') {
+        input.mouse.inside = true;
+        updateGhost();
+        placeGhost(false);
+        input.mouse.inside = false;
+      }
+    },
+  });
+
+  function tapAt(x, y) {
+    if (!world.ready || ended) return;
+    const t = toTile(x, y);
+    if (casting) {
+      send({ type: CMD.USE_ABILITY, unitIds: casting.unitIds, ability: casting.ability, x: t.x, y: t.y });
+      renderer.addMarker(t.x, t.y, 'attack');
+      casting = null;
+      return;
+    }
+    if (targeting) {
+      attackMoveAt(t);
+      targeting = false;
+      return;
+    }
+
+    const own = selectedOwnUnits();
+    const unit = world.unitAt(t.x, t.y);
+    const building = unit ? null : world.buildingAt(Math.floor(t.x), Math.floor(t.y));
+
+    if (unit && world.isMine(unit)) {
+      // 내 아르카논·수송선을 누르면 고른 병력이 탄다
+      const boarding = garrisonOf(unit.type) && own.some((u) => u.id !== unit.id && canBoard(unit.type, u.type));
+      if (boarding) commandAt(t);
+      else selectAt(t, false);
+      return;
+    }
+    if (building && world.isMine(building)) {
+      // 농노를 고른 채 짓다 만 건물·반납할 건물을 누르면 일을 시킨다
+      const accepts = BUILDINGS[building.type].dropoff ?? [];
+      const workers = own.filter((u) => UNITS[u.type].worker);
+      const helps = workers.length && (!building.complete || workers.some((u) => u.carryAmount > 0 && accepts.includes(u.carryKind)));
+      if (helps) commandAt(t);
+      else selectAt(t, false);
+      return;
+    }
+    if (own.length || selectedProductionBuilding()) {
+      commandAt(t); // 적은 공격, 금광·나무는 채집, 땅은 이동, 생산 건물이면 집결지
+      return;
+    }
+    selectAt(t, false);
+  }
+
+  /** 터치 화면의 빠른 선택 버튼 */
+  function selectArmy() {
+    const ids = [...world.units.values()]
+      .filter((u) => world.isMine(u) && !u.carried && !UNITS[u.type].worker)
+      .map((u) => u.id);
+    if (!ids.length) toast('고를 병력이 없습니다.');
+    setSelection(ids);
+  }
+
+  function selectIdleWorkers() {
+    const idle = [...world.units.values()].filter((u) => world.isMine(u) && UNITS[u.type].worker && u.state === 0);
+    if (!idle.length) {
+      toast('쉬고 있는 농노가 없습니다.');
+      return;
+    }
+    setSelection(idle.map((u) => u.id));
+    const first = idle[0];
+    camera.centerOn(first.drawX * TILE_SIZE, first.drawY * TILE_SIZE);
+  }
+
+  function cancelMode() {
+    casting = null;
+    targeting = false;
+    cancelPlacing();
+  }
+
+  input.handlers.key = (event) => {
+    // Enter: 채팅 입력 (경기가 끝난 뒤에도 인사할 수 있게 ended보다 먼저)
+    if (!tutorial && (event.code === 'Enter' || event.code === 'NumpadEnter' || event.key === 'Enter')) {
+      event.preventDefault();
+      chat.open();
+      return;
+    }
+    if (ended) return;
+    if (event.code === 'Delete') {
+      // Delete: 고른 내 건물 팔기 (명령 카드의 X와 같다. 두 번 눌러야 판다)
+      const building = selection.size === 1 ? world.buildings.get([...selection][0]) : null;
+      if (!building || !world.isMine(building) || !building.complete) return;
+      if (canSell(building.type)) onAction({ kind: 'sell', id: building.id });
+      else reject(REJECT.CANNOT_SELL);
+      return;
+    }
+    if (event.code === 'Escape') {
+      if (soundControl.open) soundControl.close();
+      else if (!tributePanel.hidden) toggleTribute(false);
+      else if (casting) casting = null;
+      else if (targeting) targeting = false;
+      else if (placing) cancelPlacing();
+      else selection.clear();
+      return;
+    }
+    if (commandCard.handleKey(event)) event.preventDefault();
+  };
+
+  // ---------- HUD ----------
+
+  // 우리 팀을 왼쪽에, 상대 팀을 오른쪽에
+  const playerTags = new Map();
+  const versus = h('div', { class: 'versus' });
+  [myTeam, 1 - myTeam].forEach((team, i) => {
+    if (i > 0) versus.append(h('span', { class: 'vs' }, 'VS'));
+    for (const player of players.filter((p) => (p.team ?? p.slot) === team)) {
+      const tag = h(
+        'span',
+        { class: player.uid === me.uid ? 'player-tag is-me' : 'player-tag' },
+        h('i', { class: 'swatch', style: `--c: ${PLAYER_COLORS[player.slot]}` }),
+        `P${player.slot + 1} ${player.nickname}`,
+      );
+      playerTags.set(player.uid, tag);
+      versus.append(tag);
+    }
+  });
+
+  const resourceValue = () => h('span', { class: 'res-val' }, '—');
+  const res = { gold: resourceValue(), wood: resourceValue(), mana: resourceValue(), pop: resourceValue(), age: h('span', { class: 'res-age' }, '—') };
+  const resources = h(
+    'div',
+    { class: 'resources' },
+    h('span', { class: 'res res-gold' }, h('b', { class: 'res-label' }, '금'), res.gold),
+    h('span', { class: 'res res-wood' }, h('b', { class: 'res-label' }, '목재'), res.wood),
+    h('span', { class: 'res res-mana' }, h('b', { class: 'res-label' }, '마나'), res.mana),
+    h('span', { class: 'res res-pop' }, h('b', { class: 'res-label' }, '인구'), res.pop),
+    res.age,
+  );
+
+  const ping = h('span', { class: 'mono' }, '— ms');
+  const tileInfo = h('span', { class: 'mono' }, '—');
+  const zoomInfo = h('span', { class: 'mono' }, '100%');
+  const banner = h('div', { class: 'hud-banner', role: 'status', hidden: true });
+  const netBanner = h('div', { class: 'hud-banner is-danger', role: 'status', hidden: true });
+
+  const soundControl = createSoundControl({
+    onOpen: () => {
+      toggleTribute(false);
+      surrenderConfirm.hidden = true;
+    },
+  });
+  const surrenderConfirm = h(
+    'div',
+    { class: 'confirm', role: 'dialog', 'aria-label': '항복 확인', hidden: true },
+    h('p', {}, '항복하면 바로 패배합니다.'),
+    h(
+      'div',
+      { class: 'confirm-actions' },
+      h('button', { class: 'btn btn-sm', type: 'button', onClick: () => { surrenderConfirm.hidden = true; } }, '계속 싸우기'),
+      h(
+        'button',
+        {
+          class: 'btn btn-sm btn-danger',
+          type: 'button',
+          onClick: () => {
+            surrenderConfirm.hidden = true;
+            send({ type: CMD.SURRENDER });
+          },
+        },
+        '항복',
+      ),
+    ),
+  );
+  const surrenderButton = h(
+    'button',
+    {
+      class: 'btn btn-sm',
+      type: 'button',
+      onClick: () => {
+        toggleTribute(false);
+        surrenderConfirm.hidden = !surrenderConfirm.hidden;
+      },
+    },
+    '항복',
+  );
+
+  // ---------- 자원 보내기 (팀전) ----------
+  // 받을 팀원을 고르고 자원 버튼을 누르면 바로 보낸다. 운송 수수료를 떼고 도착한다.
+  const teammates = players.filter((p) => p.slot !== mySlot && (p.team ?? p.slot) === myTeam);
+  let tributeTo = teammates[0]?.slot ?? null;
+  const mateButtons = teammates.map((mate) =>
+    h(
+      'button',
+      {
+        class: 'tribute-mate',
+        type: 'button',
+        role: 'radio',
+        'aria-checked': 'false',
+        onClick: () => {
+          tributeTo = mate.slot;
+          updateTribute();
+        },
+      },
+      h('i', { class: 'swatch', style: `--c: ${PLAYER_COLORS[mate.slot]}` }),
+      h('span', { class: 'tribute-name' }, `P${mate.slot + 1} ${mate.nickname}`),
+      h('span', { class: 'tribute-stock' }, '—'),
+    ),
+  );
+  const amountButtons = [];
+  const tributeRows = RESOURCES.map((resource) =>
+    h(
+      'div',
+      { class: `tribute-row res-${resource}` },
+      h('b', { class: 'res-label' }, RESOURCE_NAMES[resource]),
+      TRIBUTE.amounts.map((amount) => {
+        const button = h(
+          'button',
+          { class: 'btn btn-sm', type: 'button', onClick: () => sendTribute(resource, amount) },
+          `${amount.toLocaleString('ko-KR')} 보내기`,
+        );
+        amountButtons.push({ button, resource, amount });
+        return button;
+      }),
+    ),
+  );
+  const tributePanel = h(
+    'div',
+    { class: 'confirm tribute', role: 'dialog', 'aria-label': '자원 보내기', hidden: true },
+    h('p', { class: 'tribute-title' }, '팀원에게 자원 보내기'),
+    h('div', { class: 'tribute-mates', role: 'radiogroup', 'aria-label': '받을 팀원' }, mateButtons),
+    tributeRows,
+    h('p', { class: 'note' }, `운송 수수료 ${Math.round(TRIBUTE.fee * 100)}% — 100을 보내면 ${tributeReceived(100)}이 도착합니다.`),
+    h('div', { class: 'confirm-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onClick: () => toggleTribute(false) }, '닫기')),
+  );
+  const tributeButton =
+    teammates.length && !tutorial
+      ? h('button', { class: 'btn btn-sm', type: 'button', 'aria-expanded': 'false', onClick: () => toggleTribute() }, '자원 보내기')
+      : null;
+
+  function toggleTribute(open = tributePanel.hidden) {
+    if (open && (!tributeButton || ended)) return;
+    tributePanel.hidden = !open;
+    tributeButton?.setAttribute('aria-expanded', String(open));
+    if (open) {
+      surrenderConfirm.hidden = true;
+      updateTribute();
+    }
+  }
+
+  function sendTribute(resource, amount) {
+    if (tributeTo === null || ended) return;
+    send({ type: CMD.SEND_RESOURCES, to: tributeTo, resource, amount });
+  }
+
+  /** 팀원의 자원과 버튼 상태 (열려 있을 때만 그린다) */
+  function updateTribute() {
+    if (tributePanel.hidden) return;
+    const standing = (slot) => !world.publicPlayers.get(slot)?.defeated;
+    if (tributeTo === null || !standing(tributeTo)) tributeTo = teammates.find((mate) => standing(mate.slot))?.slot ?? null;
+    teammates.forEach((mate, i) => {
+      const button = mateButtons[i];
+      const stock = world.allies.get(mate.slot);
+      button.disabled = !standing(mate.slot);
+      button.setAttribute('aria-checked', String(mate.slot === tributeTo));
+      button.classList.toggle('is-selected', mate.slot === tributeTo);
+      button.lastChild.textContent = !standing(mate.slot)
+        ? '쓰러짐'
+        : stock
+          ? RESOURCES.map((resource) => `${RESOURCE_NAMES[resource]} ${stock[resource].toLocaleString('ko-KR')}`).join(' · ')
+          : '—';
+    });
+    for (const { button, resource, amount } of amountButtons) {
+      button.disabled = ended || tributeTo === null || !world.me || world.me[resource] < amount;
+    }
+  }
+
+  // 터치 화면용 도구: Esc·드래그 선택을 대신한다
+  const cancelModeButton = h('button', { class: 'touch-btn is-cancel', type: 'button', hidden: true, onClick: () => cancelMode() }, '취소');
+  // 터치에는 Esc가 없고 빈 땅을 누르면 이동 명령이 되므로, 선택을 푸는 버튼을 따로 둔다
+  const deselectButton = h(
+    'button',
+    {
+      class: 'touch-btn',
+      type: 'button',
+      hidden: true,
+      onClick: () => {
+        cancelMode();
+        selection.clear();
+      },
+    },
+    '선택 해제',
+  );
+  const chat = createChatBox({ messages: chatMessages, teamGame, variant: 'overlay', onSend: onSendChat });
+  const touchTools = touchMode
+    ? h(
+        'div',
+        { class: 'touch-tools', role: 'group', 'aria-label': '빠른 선택' },
+        cancelModeButton,
+        deselectButton,
+        tutorial ? null : h('button', { class: 'touch-btn', type: 'button', onClick: () => chat.open() }, '채팅'),
+        h('button', { class: 'touch-btn', type: 'button', onClick: () => selectArmy() }, '병력 전체'),
+        h('button', { class: 'touch-btn', type: 'button', onClick: () => selectIdleWorkers() }, '쉬는 농노'),
+      )
+    : null;
+
+  const resultPanel = h('div', { class: 'result-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': '경기 결과' });
+  const resultOverlay = h('div', { class: 'result-overlay', hidden: true }, resultPanel);
+
+  async function saveReplay(event) {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const bytes = await downloadReplay(recorder.build());
+      toast(`리플레이를 저장했습니다 (${Math.max(1, Math.round(bytes / 1024))} KB). 로비에서 열어 볼 수 있습니다.`);
+    } catch (err) {
+      console.error('[리플레이 저장 실패]', err);
+      toast('리플레이를 저장하지 못했습니다.', { error: true });
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  // 랭킹전 레이팅 변화는 결과보다 조금 늦게 온다 (서버가 저장한 뒤)
+  const ratingLine = h('p', { class: 'result-rating', 'aria-live': 'polite' }, ranked ? '레이팅 계산 중…' : '');
+  function setRankedResult({ changes }) {
+    const mine = changes.find((c) => c.nickname === me.nickname);
+    if (!mine) return;
+    const sign = mine.delta > 0 ? '+' : '';
+    ratingLine.textContent = `레이팅 ${mine.before} → ${mine.after} (${sign}${mine.delta})`;
+    ratingLine.classList.toggle('is-up', mine.delta > 0);
+    ratingLine.classList.toggle('is-down', mine.delta < 0);
+  }
+
+  function showResult(result) {
+    ended = true;
+    cancelPlacing();
+    targeting = false;
+    renderer.attackCursor = null;
+    surrenderConfirm.hidden = true;
+    surrenderButton.disabled = true;
+    toggleTribute(false);
+    if (tributeButton) tributeButton.disabled = true;
+
+    recorder?.finish(result);
+    const won = result.winnerTeam === myTeam;
+    sounds.stop();
+    const minutes = Math.floor(result.durationSec / 60);
+    const seconds = String(result.durationSec % 60).padStart(2, '0');
+    // replaceChildren은 null을 "null" 글자로 넣으므로, 조건부 항목이 섞인 목록은 걸러서 넘긴다
+    const rows = [
+      h('p', { class: won ? 'result-kicker is-win' : 'result-kicker' }, won ? '승리' : '패배'),
+      h('h2', { class: 'result-title' }, won ? '왕관을 지켰습니다' : '왕관을 잃었습니다'),
+      h('p', { class: 'result-reason' }, `${endReason(result.reason, won, teamGame)} · 경기 시간 ${minutes}분 ${seconds}초`),
+      ranked ? ratingLine : null,
+      teamGame
+        ? h(
+            'ul',
+            { class: 'result-teams' },
+            ...[0, 1].map((team) =>
+              h(
+                'li',
+                { class: team === result.winnerTeam ? 'is-winner' : '' },
+                h('strong', {}, team === myTeam ? '우리 팀' : '상대 팀'),
+                ' ',
+                result.players
+                  .filter((p) => p.team === team)
+                  .map((p) => p.nickname)
+                  .join(' · '),
+              ),
+            ),
+          )
+        : null,
+      h(
+        'div',
+        { class: 'result-actions' },
+        h('button', { class: 'btn', type: 'button', onClick: onLeave }, '로비로'),
+        recorder ? h('button', { class: 'btn', type: 'button', onClick: saveReplay }, '리플레이 저장') : null,
+        ranked ? null : h('button', { class: 'btn btn-primary', type: 'button', onClick: () => onReturnToRoom?.() }, '대기실로 (재대결)'),
+      ),
+    ];
+    resultPanel.replaceChildren(...rows.filter(Boolean));
+    resultOverlay.hidden = false;
+  }
+
+  const el = h(
+    'div',
+    { class: touchMode ? 'hud is-touch' : 'hud' },
+    h(
+      'header',
+      { class: 'hud-top' },
+      resources,
+      versus,
+      h(
+        'div',
+        { class: 'hud-right' },
+        tutorial ? null : ping,
+        soundControl.el,
+        tributeButton,
+        tributeButton ? tributePanel : null,
+        tutorial ? null : surrenderButton,
+        surrenderConfirm,
+      ),
+    ),
+    h('div', { class: 'hud-banners' }, netBanner, banner),
+    h('div', { class: 'hud-minimap' }, minimap.canvas),
+    tutorial ? null : h('div', { class: 'hud-chat' }, chat.el),
+    touchTools,
+    touchMode ? h('p', { class: 'rotate-hint' }, '가로로 돌리면 더 넓게 볼 수 있습니다') : null,
+    commandCard.el,
+    h(
+      'div',
+      { class: 'hud-info' },
+      h('span', {}, '타일 ', tileInfo),
+      h('span', {}, '확대 ', zoomInfo),
+      h('span', {}, '방향키·가장자리 이동 · 휠 확대'),
+    ),
+    resultOverlay,
+  );
+
+  function updateHud() {
+    const p = world.me;
+    if (p) {
+      res.gold.textContent = p.gold.toLocaleString('ko-KR');
+      res.wood.textContent = p.wood.toLocaleString('ko-KR');
+      res.mana.textContent = p.mana.toLocaleString('ko-KR');
+      res.pop.textContent = `${p.pop}/${p.popCap}`;
+      res.pop.classList.toggle('is-full', p.pop >= p.popCap);
+      res.age.textContent = p.ageTarget
+        ? `${AGES[p.ageTarget].name}로 발전 중 ${Math.floor(p.ageProgress * 100)}%`
+        : AGES[p.age].name;
+    }
+    const t = renderer.hoverTile;
+    tileInfo.textContent =
+      t && t.x >= 0 && t.y >= 0 && t.x < map.width && t.y < map.height
+        ? `${t.x}, ${t.y} · ${TERRAIN_NAMES[world.tiles[t.y * map.width + t.x]]}`
+        : '—';
+    zoomInfo.textContent = `${Math.round(camera.zoom * 100)}%`;
+
+    // 맺은 맹세는 서로에게 공개된다
+    for (const player of players) {
+      const oath = world.oathOf(player.slot);
+      const tag = playerTags.get(player.uid);
+      if (!tag || tag.dataset.oath === (oath ?? '')) continue;
+      tag.dataset.oath = oath ?? '';
+      tag.lastChild.textContent = `P${player.slot + 1} ${player.nickname}${oath ? ` · ${OATHS[oath].name}` : ''}`;
+    }
+
+    const confirming = performance.now() < sellConfirm.until ? sellConfirm.id : null;
+    commandCard.update({ world, selection, players, touch: touchMode, sellConfirm: confirming });
+    updateTribute();
+    cancelModeButton.hidden = !(casting || targeting || placing);
+    deselectButton.hidden = selection.size === 0;
+  }
+
+  // ---------- 루프 ----------
+
+  canvas.hidden = false;
+  renderer.resize();
+  const keepCenter = footprintCenter(map.starts.find((s) => s.slot === mySlot).keep);
+  camera.centerOn(keepCenter.x, keepCenter.y);
+
+  const onResize = () => renderer.resize();
+  window.addEventListener('resize', onResize);
+
+  let rafId = 0;
+  let lastTime = performance.now();
+  let hudTimer = 0;
+
+  function frame(now) {
+    const dt = Math.min(0.05, (now - lastTime) / 1000);
+    lastTime = now;
+
+    const [kx, ky] = input.keyAxis();
+    const [ex, ey] = press ? [0, 0] : input.edgeAxis(camera.viewWidth, camera.viewHeight);
+    const mx = Math.sign(kx + ex);
+    const my = Math.sign(ky + ey);
+    if (mx || my) {
+      const length = Math.hypot(mx, my);
+      camera.pan((mx / length) * PAN_SPEED * dt, (my / length) * PAN_SPEED * dt);
+    }
+    const pan = input.consumePan();
+    if (pan.x || pan.y) camera.pan(-pan.x, -pan.y);
+    const wheel = input.consumeWheel();
+    if (wheel) camera.zoomAt(wheel, input.mouse.x, input.mouse.y);
+
+    world.updateDrawPositions(dt);
+    updateGhost();
+    renderer.attackCursor = targeting && input.mouse.inside ? toTile(input.mouse.x, input.mouse.y) : null;
+    renderer.castCursor =
+      casting && input.mouse.inside ? { ...toTile(input.mouse.x, input.mouse.y), ability: casting.ability } : null;
+    if (input.mouse.inside) {
+      const t = toTile(input.mouse.x, input.mouse.y);
+      renderer.hoverTile = { x: Math.floor(t.x), y: Math.floor(t.y) };
+    } else {
+      renderer.hoverTile = null;
+    }
+
+    renderer.draw(now);
+    minimap.draw(now);
+    const view = camera.visibleRect();
+    sounds.frame(dt, { x: view.x / TILE_SIZE, y: view.y / TILE_SIZE, w: view.w / TILE_SIZE, h: view.h / TILE_SIZE });
+
+    hudTimer -= dt;
+    if (hudTimer <= 0) {
+      hudTimer = 0.1;
+      updateHud();
+    }
+    rafId = requestAnimationFrame(frame);
+  }
+  rafId = requestAnimationFrame(frame);
+
+  /** 방 상태가 바뀌면(상대가 나가면) HUD에 표시한다 */
+  function updateRoom(room) {
+    const present = new Map(room.players.map((p) => [p.uid, p]));
+    let message = '';
+    for (const [uid, tag] of playerTags) {
+      const player = present.get(uid);
+      const offline = player ? player.connected === false : true;
+      tag.classList.toggle('is-gone', offline);
+      if (uid === me.uid || !offline) continue;
+      message = player ? '상대의 연결이 끊겼습니다. 돌아오기를 기다리는 중…' : '상대가 경기를 떠났습니다.';
+    }
+    banner.textContent = message;
+    banner.hidden = !message;
+  }
+
+  return {
+    el,
+    // 튜토리얼이 진행을 확인할 때 읽는다
+    camera,
+    selection,
+    world,
+    updateRoom,
+    setRankedResult,
+    addChatMessage: (message) => chat.add(message),
+    resetChat: (messages) => chat.reset(messages),
+    setPing: (ms) => {
+      ping.textContent = `${ms} ms`;
+    },
+    destroy() {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', onResize);
+      socket.off(EV.GAME_SNAP, onSnapshot);
+      socket.off(EV.GAME_REJECT, onReject);
+      socket.off(EV.GAME_END, onEnd);
+      socket.off('disconnect', onOffline);
+      socket.off('connect', onOnline);
+      input.destroy();
+      touch.destroy();
+      chat.destroy();
+      sounds.stop();
+      soundControl.destroy();
+      canvas.hidden = true;
+    },
+  };
+}

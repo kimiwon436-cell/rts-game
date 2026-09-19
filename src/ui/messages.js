@@ -1,0 +1,60 @@
+import { ERR, REJECT } from '@rune/shared/protocol.js';
+
+const MESSAGES = {
+  // 로비
+  [ERR.UNAUTHORIZED]: '로그인 정보를 확인할 수 없습니다. 다시 로그인하세요. (서버와 클라이언트가 같은 인증 방식인지도 확인하세요)',
+  [ERR.INVALID_PAYLOAD]: '요청 형식이 올바르지 않습니다.',
+  [ERR.ROOM_NOT_FOUND]: '방이 사라졌습니다. 목록에서 다른 방을 고르세요.',
+  [ERR.ROOM_FULL]: '방이 가득 찼습니다.',
+  [ERR.ROOM_NOT_WAITING]: '이미 게임이 시작된 방입니다.',
+  [ERR.NOT_IN_ROOM]: '참가 중인 방이 없습니다.',
+  [ERR.NOT_HOST]: '방장만 바꿀 수 있습니다.',
+  [ERR.IN_ROOM]: '방에서 나온 뒤에 랭킹전 매칭을 시작하세요.',
+  [ERR.CHAT_RATE_LIMITED]: '메시지를 너무 빨리 보내고 있습니다. 잠시 뒤에 보내세요.',
+  [ERR.CHAT_EMPTY]: '보낼 내용이 없습니다.',
+  [ERR.MATCH_CANCELLED]: '상대가 나가 매칭이 취소됐습니다.',
+  [ERR.TEAM_FULL]: '그 팀은 자리가 없습니다.',
+  [ERR.INVALID_SETTINGS]: '그 방식과 맵은 함께 고를 수 없습니다.',
+  [ERR.NO_PROFILE]: '닉네임을 먼저 정해 주세요.',
+  [ERR.PROFILE_EXISTS]: '이미 닉네임을 정한 계정입니다.',
+  [ERR.NICKNAME_INVALID]: '쓸 수 없는 닉네임입니다.',
+  [ERR.NICKNAME_TAKEN]: '이미 쓰고 있는 닉네임입니다.',
+  [ERR.UNAVAILABLE]: '서버가 잠시 요청을 처리하지 못했습니다. 조금 뒤에 다시 시도하세요.',
+  TIMEOUT: '서버가 응답하지 않습니다. 연결 상태를 확인하세요.',
+
+  // 게임 명령
+  [REJECT.INVALID]: '명령을 처리할 수 없습니다.',
+  [REJECT.RATE_LIMITED]: '명령을 너무 빠르게 보내고 있습니다.',
+  [REJECT.NO_WORKER]: '농노를 선택하세요.',
+  [REJECT.INVALID_TARGET]: '그 대상에는 명령할 수 없습니다.',
+  [REJECT.NOT_ENOUGH_GOLD]: '금이 부족합니다.',
+  [REJECT.NOT_ENOUGH_WOOD]: '목재가 부족합니다.',
+  [REJECT.NOT_ENOUGH_MANA]: '마나가 부족합니다.',
+  [REJECT.REQUIRES_AGE]: '더 높은 시대가 필요합니다.',
+  [REJECT.REQUIRES_BUILDING]: '필요한 건물을 먼저 지어야 합니다.',
+  [REJECT.AGE_IN_PROGRESS]: '이미 시대를 발전하고 있습니다.',
+  [REJECT.MAX_AGE]: '더 발전할 수 없습니다.',
+  [REJECT.NO_MARKET]: '완성된 시장이 필요합니다.',
+  [REJECT.QUEUE_FULL]: '생산 대기열이 가득 찼습니다.',
+  [REJECT.CANNOT_ATTACK]: '선택한 유닛으로는 그 대상을 공격할 수 없습니다.',
+  [REJECT.OUT_OF_BOUNDS]: '맵 밖에는 지을 수 없습니다.',
+  [REJECT.BLOCKED]: '그 자리는 막혀 있습니다.',
+  [REJECT.NEEDS_WELL]: '룬 오벨리스크는 마나 샘 위에만 지을 수 있습니다.',
+  [REJECT.WELL_TAKEN]: '이미 오벨리스크가 선 마나 샘입니다.',
+  [REJECT.ON_WELL]: '마나 샘 위에는 룬 오벨리스크만 지을 수 있습니다.',
+  // 맹세와 궁극 유닛
+  [REJECT.OATH_ALREADY_TAKEN]: '이미 맹세를 맺었습니다. 맹세는 번복할 수 없습니다.',
+  [REJECT.REQUIRES_OATH]: '맺은 맹세의 궁극 유닛만 부를 수 있습니다.',
+  [REJECT.ULTIMATE_EXISTS]: '궁극 유닛은 한 경기에 한 기만 존재합니다.',
+  [REJECT.ON_COOLDOWN]: '아직 다시 쓸 수 없습니다.',
+  [REJECT.OUT_OF_RANGE]: '너무 멉니다.',
+  [REJECT.GARRISON_FULL]: '더 태울 수 없습니다.',
+  [REJECT.CANNOT_BOARD]: '그 유닛은 탈 수 없습니다. 아르카논 등에는 창병·장궁병·왕실 근위병·전투 마법사, 수송선에는 궁극 유닛이 아닌 뭍 유닛이 탑니다.',
+  // 해군
+  [REJECT.NO_LANDING]: '뭍에 더 가까이 대야 내릴 수 있습니다.',
+  [REJECT.NEEDS_COAST]: '조선소는 바다와 이어진 물가에 지어야 합니다.',
+  // 건물
+  [REJECT.CANNOT_SELL]: '영주관은 팔 수 없습니다. 영주관이 무너지면 그 자리에서 집니다.',
+};
+
+export const errorMessage = (code) => MESSAGES[code] ?? `알 수 없는 오류입니다 (${code})`;
